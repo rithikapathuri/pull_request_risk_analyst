@@ -8,6 +8,7 @@ from backend.models import (
 )
 
 
+# Signal weights must match keys in scorer.py SIGNAL_WEIGHTS
 SIGNAL_SEVERITY: dict[str, tuple[RiskLevel, bool]] = {
     # (severity, is_ambiguous)
     "eval_usage":         (RiskLevel.CRITICAL, False),
