@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+node_modules/
+frontend/dist/
+data/cache/
+*.db
+.DS_Store
+pytest.ini
+requirements.txt
