@@ -88,6 +88,7 @@ class GitHubClient:
         pr_data = await self._get(f"/repos/{owner}/{repo}/pulls/{number}")
         files_data = await self._paginate(f"/repos/{owner}/{repo}/pulls/{number}/files")
         head_sha = pr_data["head"]["sha"]
+        base_sha = pr_data["base"]["sha"]
 
         pr_files: list[PRFile] = []
         dep_filenames: list[str] = []
@@ -105,13 +106,24 @@ class GitHubClient:
             if Path(fname).name in DEPENDENCY_FILES:
                 dep_filenames.append(fname)
 
-        # Fetch raw content of each dependency manifest at head commit
-        raw_content: dict[str, str] = {}
+        # Fetch manifest content at both head and base to diff dependencies
+        head_content: dict[str, str] = {}
+        base_content: dict[str, str] = {}
         for dep_file in dep_filenames:
             try:
-                raw_content[dep_file] = await self._file_content(owner, repo, dep_file, head_sha)
+                head_content[dep_file] = await self._file_content(owner, repo, dep_file, head_sha)
             except Exception:
                 pass
+            try:
+                base_content[dep_file] = await self._file_content(owner, repo, dep_file, base_sha)
+            except Exception:
+                pass
+
+        head_deps = parse_all_dependencies(head_content)
+        base_deps = parse_all_dependencies(base_content)
+
+        # Packages present in head but not base were added by this PR
+        new_deps = [pkg for pkg in head_deps if pkg not in base_deps]
 
         return PRInfo(
             owner=owner,
@@ -123,7 +135,8 @@ class GitHubClient:
             head_branch=pr_data["head"]["ref"],
             files=pr_files,
             dependency_files=dep_filenames,
-            raw_dependencies=parse_all_dependencies(raw_content),
+            raw_dependencies=head_deps,
+            new_dependencies=new_deps,
         )
 
     async def get_file_at_ref(self, owner: str, repo: str, path: str, ref: str) -> Optional[str]:

@@ -10,7 +10,7 @@ from backend.github import GitHubClient, parse_diff_hunks
 from backend.parser import parse_pr
 from backend.graph import build_graphs, graph_summary
 from backend.reachability import analyze_reachability
-from backend.cve import check_dependencies
+from backend.cve import check_dependencies, check_new_dependencies
 from backend.scorer import compute_risk_score
 from backend.llm import run_llm_chain
 
@@ -45,7 +45,7 @@ async def run_analysis(
     run_llm: bool = True,
 ) -> PRAnalysisResult:
     """
-    Full pipeline —> called by the API route and the benchmark runner
+    Full pipeline —> called by the API route and the benchmark runner.
 
     1  Fetch PR metadata, files, diffs, dependency manifests from GitHub
     2  Parse changed hunks with AST (Python) or regex (JS/TS)
@@ -65,8 +65,13 @@ async def run_analysis(
     parse_result = parse_pr(pr_info.files, hunks)
     graphs       = build_graphs(parse_result, pr_info.files)
     blast_radius = graphs.compute_blast_radius(parse_result.changed_function_names)
-    dep_risks    = await check_dependencies(pr_info.raw_dependencies, pr_info.dependency_files)
-    dep_risks    = analyze_reachability(dep_risks, parse_result, graphs.call_graph)
+    dep_risks      = await check_dependencies(pr_info.raw_dependencies, pr_info.dependency_files)
+    new_dep_risks  = await check_new_dependencies(pr_info.new_dependencies, pr_info.raw_dependencies)
+    # Merge new dep results in —> new packages appear in both lists but new_dep_risks
+    # has the is_new=True flag and typosquatting checks applied
+    existing_pkgs  = {d.package for d in dep_risks}
+    dep_risks      = dep_risks + [d for d in new_dep_risks if d.package not in existing_pkgs]
+    dep_risks      = analyze_reachability(dep_risks, parse_result, graphs.call_graph)
     risk         = compute_risk_score(pr_info, parse_result, blast_radius, dep_risks)
 
     signal_summaries = [SecuritySignalSummary(signal=s) for s in parse_result.security_signals]
@@ -102,7 +107,7 @@ async def analyze(req: AnalyzeRequest) -> PRAnalysisResult:
 
 @app.get("/api/v1/pr/{owner}/{repo}/{pr_number}", response_model=PRInfo)
 async def get_pr(owner: str, repo: str, pr_number: int) -> PRInfo:
-    """Fetch PR metadata"""
+    """Fetch PR metadata only — no analysis. Useful for previewing before submitting"""
     try:
         async with GitHubClient() as gh:
             return await gh.get_pr(owner, repo, pr_number)

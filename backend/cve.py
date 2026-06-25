@@ -47,7 +47,7 @@ def _cvss_to_level(score: float) -> RiskLevel:
 def _extract_cvss(vuln: dict) -> float:
     """
     OSV records can carry severity in several different places depending on
-    source database -> check all and return highest score found
+    the source database. Check all of them and return the highest score found.
     """
     best = 0.0
 
@@ -142,7 +142,7 @@ async def check_dependencies(
 ) -> list[DependencyRisk]:
     """
     Queries OSV.dev for every dependency in raw_dependencies.
-    Runs all queries concurrently -> a PR with 50 deps takes roughly the
+    Runs all queries concurrently —> a PR with 50 deps takes roughly the
     same time as one with 5
     Ecosystem is inferred from the manifest filename if provided,
     defaulting to PyPI when unknown
@@ -171,3 +171,77 @@ async def check_dependencies(
             deps.append(result)
 
     return deps
+
+
+# Common packages that get typosquatted — check new deps against these
+COMMON_PACKAGES = {
+    "requests", "numpy", "pandas", "flask", "django", "fastapi",
+    "sqlalchemy", "boto3", "pytest", "pydantic", "httpx", "celery",
+    "redis", "pillow", "cryptography", "paramiko", "urllib3",
+    "express", "lodash", "react", "axios", "webpack", "babel",
+}
+
+
+def _typosquatting_score(package: str) -> float:
+    """
+    Returns a similarity score 0-1 against known common packages
+    Uses character-level edit distance -> Score > 0.85 but not exact = suspicious
+    """
+    def _edit_distance(a: str, b: str) -> int:
+        m, n = len(a), len(b)
+        dp = list(range(n + 1))
+        for i in range(1, m + 1):
+            prev = dp[:]
+            dp[0] = i
+            for j in range(1, n + 1):
+                dp[j] = prev[j - 1] if a[i-1] == b[j-1] else 1 + min(prev[j], dp[j-1], prev[j-1])
+        return dp[n]
+
+    best = 0.0
+    for known in COMMON_PACKAGES:
+        if package == known:
+            return 0.0  # exact match — not suspicious
+        longer = max(len(package), len(known))
+        if longer == 0:
+            continue
+        similarity = 1.0 - (_edit_distance(package, known) / longer)
+        best = max(best, similarity)
+    return best
+
+
+async def check_new_dependencies(new_packages: list[str], all_deps: dict[str, str]) -> list[DependencyRisk]:
+    """
+    Extra checks for packages added by this PR specifically:
+    - CVE lookup (same as existing deps)
+    - Typosquatting detection against well-known packages
+
+    A new package with high similarity to a known one (> 0.82) gets flagged
+    even without a CVE, since it may be a supply chain attack.
+    """
+    if not new_packages:
+        return []
+
+    results: list[DependencyRisk] = []
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        for pkg in new_packages:
+            version = all_deps.get(pkg, "unknown")
+            dep = await _check_one(client, pkg, version, "PyPI")
+            dep.is_new = True
+
+            typo_score = _typosquatting_score(pkg)
+            if typo_score > 0.82 and not dep.cves:
+                # Fabricate a signal-level record so the scorer and LLM see it
+                dep.cves.append(CVERecord(
+                    cve_id="SUSPICIOUS-TYPOSQUAT",
+                    package=pkg,
+                    installed_version=version,
+                    severity=RiskLevel.HIGH,
+                    cvss_score=7.5,
+                    description=f"Package name '{pkg}' is highly similar to a well-known package (similarity={typo_score:.2f}). Possible typosquatting.",
+                ))
+                dep.effective_risk_score = 75.0
+
+            results.append(dep)
+
+    return results

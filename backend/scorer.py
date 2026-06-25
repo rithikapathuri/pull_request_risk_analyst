@@ -28,12 +28,22 @@ SIGNAL_WEIGHTS: dict[str, float] = {
     "insecure_cookie":    55,
     "open_redirect":      50,
     "weak_random":        50,
-    "crypto_modified":    30,
-    "auth_modified":      30,
-    "globals_usage":      25,
+    "crypto_modified":          30,
+    "auth_modified":            30,
+    "globals_usage":            25,
+    # Deletion signals —> weighted higher than equivalent addition signals
+    # because removing a security control is often worse than adding bad code
+    "auth_check_removed":       95,
+    "security_control_removed": 75,
+    # IaC signals
+    "iac_privileged_container":  80,
+    "iac_root_user":             80,
+    "iac_secret_in_env":         95,
+    "iac_dangerous_workflow":    85,
+    "iac_exposed_port":          45,
 }
 
-# Path keywords that indicate a security-sensitive file — doubles the line-change weight
+# Path keywords that indicate a security-sensitive file —> doubles the line-change weight
 SENSITIVE_PATH_KEYWORDS = {
     "auth", "login", "logout", "oauth", "jwt", "session",
     "payment", "billing", "checkout", "crypto", "cipher",
@@ -49,10 +59,10 @@ def _is_sensitive_path(filename: str) -> bool:
 
 def _change_severity(pr_info: PRInfo) -> float:
     """
-    Weighted line count across all changed files.
+    Weighted line count across all changed files
     Lines in sensitive files count 2.5x — changing 50 lines of auth code
-    is more dangerous than 200 lines of a README.
-    Normalised so ~500 weighted lines → ~83 score, capped at 100.
+    is more dangerous than 200 lines of a README
+    Normalised so ~500 weighted lines → ~83 score, capped at 100
     """
     total = 0.0
     for f in pr_info.files:
@@ -64,17 +74,17 @@ def _change_severity(pr_info: PRInfo) -> float:
 
 def _blast_radius_score(blast: BlastRadius) -> float:
     """
-    Converts the weighted blast radius into 0-100.
-    A weighted score of 25+ saturates at 100.
+    Converts the weighted blast radius into 0-100
+    A weighted score of 25+ saturates at 100
     """
     return round(min(blast.weighted_score * 4.0, 100), 2)
 
 
 def _security_signal_score(signals: list[SecuritySignal]) -> float:
     """
-    Averages signal weights with a scaling factor for signal count.
+    Averages signal weights with a scaling factor for signal count
     More signals raise the score but with diminishing returns — ten minor
-    signals should not outweigh one eval() call.
+    signals should not outweigh one eval() call
     """
     if not signals:
         return 0.0
@@ -88,14 +98,15 @@ def _security_signal_score(signals: list[SecuritySignal]) -> float:
 def _dependency_risk_score(dep_risks: list[DependencyRisk]) -> float:
     """
     Max CVSS-derived score across all packages, with reachability discount
-    applied per CVE. Not reachable → 15% of face value (still penalised
-    because the vulnerable code is present even if not currently called).
+    applied per CVE
+    New packages (added by this PR) get no discount —> we
+    have no call-graph history for them and they deserve full scrutiny
     """
     scores: list[float] = []
     for dep in dep_risks:
         for cve in dep.cves:
-            base = cve.cvss_score * 10  # CVSS 0-10 → 0-100
-            if cve.is_reachable is False:
+            base = cve.cvss_score * 10
+            if cve.is_reachable is False and not dep.is_new:
                 base *= settings.reachability_discount
             scores.append(base)
     return round(min(max(scores, default=0.0), 100), 2)

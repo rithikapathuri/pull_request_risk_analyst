@@ -13,9 +13,9 @@ class RiskLevel(str, Enum):
 
 
 class ImpactCategory(str, Enum):
-    CRITICAL  = "critical"   # auth, payment, crypto
-    SECONDARY = "secondary"  # services that touch critical
-    LOW       = "low"        # UI, logging, tests
+    CRITICAL  = "critical"
+    SECONDARY = "secondary"
+    LOW       = "low"
 
 
 class Language(str, Enum):
@@ -48,7 +48,8 @@ class PRInfo(BaseModel):
     head_branch: str
     files: list[PRFile] = []
     dependency_files: list[str] = []
-    raw_dependencies: dict[str, str] = {}  # {package: version}
+    raw_dependencies: dict[str, str] = {}
+    new_dependencies: list[str] = []  # packages added by this PR specifically
 
 
 class DiffHunk(BaseModel):
@@ -66,24 +67,29 @@ class FunctionNode(BaseModel):
     filename: str
     start_line: int
     end_line: int
-    calls: list[str] = []     # function/method names this function calls
-    is_changed: bool = False   # overlaps with at least one diff hunk
+    calls: list[str] = []
+    is_changed: bool = False
 
 
 class SecuritySignal(BaseModel):
     filename: str
     line: int
-    signal_type: str           # matches keys in scorer.py SIGNAL_WEIGHTS
+    signal_type: str
     snippet: str
     severity: RiskLevel
-    is_ambiguous: bool = False  # True = send to Gemini for second-pass review
+    is_ambiguous: bool = False
+    # Whether this signal came from a deleted line (removal of a security control)
+    # vs an added line (introduction of a vulnerability)
+    is_deletion: bool = False
 
 
 class ParseResult(BaseModel):
     functions: list[FunctionNode] = []
     security_signals: list[SecuritySignal] = []
     changed_function_names: list[str] = []
-    imports: dict[str, list[str]] = {}  # {filename: [imported module names]}
+    imports: dict[str, list[str]] = {}
+    # Raw diff patches passed through to the LLM for full context
+    file_patches: dict[str, str] = {}
 
 
 # CVE / dependencies
@@ -96,7 +102,7 @@ class CVERecord(BaseModel):
     cvss_score: float = 0.0
     description: str = ""
     vulnerable_functions: list[str] = []
-    is_reachable: Optional[bool] = None  # set by reachability module
+    is_reachable: Optional[bool] = None
 
 
 class DependencyRisk(BaseModel):
@@ -104,6 +110,7 @@ class DependencyRisk(BaseModel):
     version: str
     cves: list[CVERecord] = []
     effective_risk_score: float = 0.0
+    is_new: bool = False  # package was added by this PR
 
 
 # Graph / blast radius
@@ -143,8 +150,8 @@ class SecuritySignalSummary(BaseModel):
 # LLM outputs
 
 class LLMTriage(BaseModel):
-    primary_risk_category: str   # injection | auth | supply_chain | crypto | etc.
-    confidence: str              # high | medium | low
+    primary_risk_category: str
+    confidence: str
     reasoning: str
 
 
