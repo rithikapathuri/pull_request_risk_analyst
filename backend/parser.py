@@ -34,8 +34,8 @@ SIGNAL_SEVERITY: dict[str, tuple[RiskLevel, bool]] = {
     "globals_usage":      (RiskLevel.MEDIUM,   True),
 }
 
-# Regex patterns applied line by line to raw source
-# Ordered most-specific first to avoid double-flagging one line
+# Regex patterns applied line by line to raw source.
+# Ordered most-specific first to avoid double-flagging one line.
 REGEX_PATTERNS: list[tuple[re.Pattern, str]] = [
     # Hardcoded secrets
     (re.compile(
@@ -183,7 +183,7 @@ class PythonASTParser(ast.NodeVisitor):
             elif node.func.id == "compile":
                 self.signals.append(self._make(lineno, "compile_usage", snippet))
 
-        # Attribute calls: pickle.loads, yaml.load, os.system, subprocess.*, etc
+        # Attribute calls: pickle.loads, yaml.load, os.system, subprocess.*, etc.
         if isinstance(node.func, ast.Attribute):
             attr = node.func.attr
             obj = node.func.value.id if isinstance(node.func.value, ast.Name) else ""
@@ -351,9 +351,9 @@ def parse_pr(files: list[PRFile], hunks: list[DiffHunk]) -> ParseResult:
         file_hunks = [h for h in hunks if h.filename == f.filename]
         hunk_ranges = [(h.start_line, h.end_line) for h in file_hunks]
 
-        # Build a partial source from what we have in the patch for analysis
-        # We use all added lines joined —> enough for AST patterns on changed code
-        # Graph builder uses full file content
+        # Build a partial source from what we have in the patch for analysis.
+        # We use all added lines joined — this is enough for AST patterns
+        # on the changed code. Graph builder uses full file content (Week 4).
         partial_source = "\n".join(
             line
             for h in file_hunks

@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+from backend.config import get_settings
+from backend.models import (
+    PRInfo, ParseResult, BlastRadius, DependencyRisk,
+    RiskBreakdown, RiskLevel, SecuritySignal,
+)
+
+settings = get_settings()
+
+# Contribution score per signal type — higher = more weight in the security component
+SIGNAL_WEIGHTS: dict[str, float] = {
+    "eval_usage":         95,
+    "exec_usage":         95,
+    "hardcoded_secret":   90,
+    "hardcoded_token":    90,
+    "raw_sql":            80,
+    "deserialization":    80,
+    "xxe":                80,
+    "path_traversal":     75,
+    "ssrf":               75,
+    "subprocess":         70,
+    "os_system":          70,
+    "weak_hash":          65,
+    "compile_usage":      65,
+    "template_injection": 65,
+    "weak_cipher":        60,
+    "insecure_cookie":    55,
+    "open_redirect":      50,
+    "weak_random":        50,
+    "crypto_modified":    30,
+    "auth_modified":      30,
+    "globals_usage":      25,
+}
+
+# Path keywords that indicate a security-sensitive file — doubles the line-change weight
+SENSITIVE_PATH_KEYWORDS = {
+    "auth", "login", "logout", "oauth", "jwt", "session",
+    "payment", "billing", "checkout", "crypto", "cipher",
+    "encrypt", "password", "secret", "token", "admin",
+    "permission", "role", "privilege",
+}
+
+
+def _is_sensitive_path(filename: str) -> bool:
+    low = filename.lower()
+    return any(kw in low for kw in SENSITIVE_PATH_KEYWORDS)
+
+
+def _change_severity(pr_info: PRInfo) -> float:
+    """
+    Weighted line count across all changed files.
+    Lines in sensitive files count 2.5x — changing 50 lines of auth code
+    is more dangerous than 200 lines of a README.
+    Normalised so ~500 weighted lines → ~83 score, capped at 100.
+    """
+    total = 0.0
+    for f in pr_info.files:
+        lines = f.additions + f.deletions
+        weight = 2.5 if _is_sensitive_path(f.filename) else 1.0
+        total += lines * weight
+    return round(min(total / 6.0, 100), 2)
+
+
+def _blast_radius_score(blast: BlastRadius) -> float:
+    """
+    Converts the weighted blast radius into 0-100.
+    A weighted score of 25+ saturates at 100.
+    """
+    return round(min(blast.weighted_score * 4.0, 100), 2)
+
+
+def _security_signal_score(signals: list[SecuritySignal]) -> float:
+    """
+    Averages signal weights with a scaling factor for signal count.
+    More signals raise the score but with diminishing returns — ten minor
+    signals should not outweigh one eval() call.
+    """
+    if not signals:
+        return 0.0
+    weights = [SIGNAL_WEIGHTS.get(s.signal_type, 40) for s in signals]
+    avg = sum(weights) / len(weights)
+    # Count multiplier: each additional signal adds 8%, capped at 1.5x
+    count_factor = min(1.0 + (len(signals) - 1) * 0.08, 1.5)
+    return round(min(avg * count_factor, 100), 2)
+
+
+def _dependency_risk_score(dep_risks: list[DependencyRisk]) -> float:
+    """
+    Max CVSS-derived score across all packages, with reachability discount
+    applied per CVE. Not reachable → 15% of face value (still penalised
+    because the vulnerable code is present even if not currently called).
+    """
+    scores: list[float] = []
+    for dep in dep_risks:
+        for cve in dep.cves:
+            base = cve.cvss_score * 10  # CVSS 0-10 → 0-100
+            if cve.is_reachable is False:
+                base *= settings.reachability_discount
+            scores.append(base)
+    return round(min(max(scores, default=0.0), 100), 2)
+
+
+def _to_risk_level(score: float) -> RiskLevel:
+    if score >= 80: return RiskLevel.CRITICAL
+    if score >= 60: return RiskLevel.HIGH
+    if score >= 35: return RiskLevel.MEDIUM
+    if score >= 15: return RiskLevel.LOW
+    return RiskLevel.INFO
+
+
+def compute_risk_score(
+    pr_info: PRInfo,
+    parse_result: ParseResult,
+    blast_radius: BlastRadius,
+    dependency_risks: list[DependencyRisk],
+) -> RiskBreakdown:
+    cs = _change_severity(pr_info)
+    br = _blast_radius_score(blast_radius)
+    ss = _security_signal_score(parse_result.security_signals)
+    dr = _dependency_risk_score(dependency_risks)
+
+    final = round(
+        settings.weight_change_severity  * cs +
+        settings.weight_blast_radius     * br +
+        settings.weight_security_signals * ss +
+        settings.weight_dependency_risk  * dr,
+        2,
+    )
+
+    return RiskBreakdown(
+        change_severity=cs,
+        blast_radius=br,
+        security_signals=ss,
+        dependency_risk=dr,
+        final_score=min(final, 100),
+        risk_level=_to_risk_level(final),
+    )
