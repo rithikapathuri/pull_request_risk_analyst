@@ -7,8 +7,7 @@ Instead of blindly flagging every vulnerable dependency in a repository, this to
 
 ## How to Run
 
-### 1. **Install dependencies:**
-Clone repository and create virtual environment
+### 1. **Clone repository and create virtual environment:**
 ```bash
 cd pull_request_risk_analyst
 
