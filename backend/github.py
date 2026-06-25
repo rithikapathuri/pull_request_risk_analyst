@@ -142,7 +142,7 @@ def parse_diff_hunks(pr_files: list[PRFile]) -> list[DiffHunk]:
 
 
 def _parse_patch(filename: str, patch: str) -> list[DiffHunk]:
-    """Parse a unified diff patch into structured hunk objects."""
+    """Parse a unified diff patch into structured hunk objects"""
     hunks: list[DiffHunk] = []
     current: Optional[DiffHunk] = None
 
@@ -171,7 +171,7 @@ def _parse_patch(filename: str, patch: str) -> list[DiffHunk]:
 
 
 def parse_all_dependencies(raw_files: dict[str, str]) -> dict[str, str]:
-    """Merge dependency versions from all manifest files into one flat dict."""
+    """Merge dependency versions from all manifest files into one flat dict"""
     deps: dict[str, str] = {}
     for filename, content in raw_files.items():
         name = Path(filename).name

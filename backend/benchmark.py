@@ -29,7 +29,7 @@ def load_cases(limit: int | None = None) -> list[BenchmarkCase]:
 
 
 def _correct(predicted: RiskLevel, expected: RiskLevel) -> bool:
-    # Within one severity level counts as correct — reflects real-world tool tolerance
+    # Within one severity level counts as correct —> reflects real-world tool tolerance
     return abs(RISK_ORDER[predicted] - RISK_ORDER[expected]) <= 1
 
 

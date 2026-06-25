@@ -12,3 +12,5 @@ data/benchmark/latest_results.json
 venv/
 env/
 .venv/
+test_run.py
+full_analysis.json

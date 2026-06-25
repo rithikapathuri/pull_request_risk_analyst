@@ -118,8 +118,8 @@ def _line_in_hunks(lineno: int, ranges: list[tuple[int, int]]) -> bool:
 
 class PythonASTParser(ast.NodeVisitor):
     """
-    Walks a Python AST and collects function nodes and security signals.
-    Only emits signals for lines that overlap with changed diff hunks.
+    Walks a Python AST and collects function nodes and security signals
+    Only emits signals for lines that overlap with changed diff hunks
     """
 
     def __init__(self, filename: str, source_lines: list[str], hunk_ranges: list[tuple[int, int]]):
@@ -183,7 +183,7 @@ class PythonASTParser(ast.NodeVisitor):
             elif node.func.id == "compile":
                 self.signals.append(self._make(lineno, "compile_usage", snippet))
 
-        # Attribute calls: pickle.loads, yaml.load, os.system, subprocess.*, etc.
+        # Attribute calls: pickle.loads, yaml.load, os.system, subprocess.*, etc
         if isinstance(node.func, ast.Attribute):
             attr = node.func.attr
             obj = node.func.value.id if isinstance(node.func.value, ast.Name) else ""
@@ -252,8 +252,8 @@ def _parse_python(filename: str, source: str, hunk_ranges: list[tuple[int, int]]
 
 def _parse_js_ts(filename: str, source: str, hunk_ranges: list[tuple[int, int]]) -> tuple[list[FunctionNode], list[SecuritySignal]]:
     """
-    JS/TS parser using regex — no AST library required.
-    Extracts function names and applies security signal patterns to changed lines.
+    JS/TS parser using regex —> no AST library required
+    Extracts function names and applies security signal patterns to changed lines
     """
     lines = source.splitlines()
     functions: list[FunctionNode] = []
@@ -295,7 +295,7 @@ def _parse_js_ts(filename: str, source: str, hunk_ranges: list[tuple[int, int]])
 
 
 def _extract_imports(filename: str, source: str) -> list[str]:
-    """Extract imported module names from Python or JS/TS source."""
+    """Extract imported module names from Python or JS/TS source"""
     imports: list[str] = []
     ext = Path(filename).suffix.lower()
 
@@ -321,11 +321,11 @@ def _extract_imports(filename: str, source: str) -> list[str]:
 
 def parse_pr(files: list[PRFile], hunks: list[DiffHunk]) -> ParseResult:
     """
-    Entry point for the parsing pipeline.
+    Entry point for the parsing pipeline
 
     For each changed file:
-      1. Reconstruct source from diff hunks (added lines only — we don't
-         have full file content here, only the patch)
+      1. Reconstruct source from diff hunks (added lines only since we don't
+         have full file content here, only have the patch)
       2. Run AST parser (Python) or regex parser (JS/TS)
       3. Collect security signals only from changed line ranges
       4. Mark functions whose body overlaps with any changed hunk
@@ -351,9 +351,9 @@ def parse_pr(files: list[PRFile], hunks: list[DiffHunk]) -> ParseResult:
         file_hunks = [h for h in hunks if h.filename == f.filename]
         hunk_ranges = [(h.start_line, h.end_line) for h in file_hunks]
 
-        # Build a partial source from what we have in the patch for analysis.
+        # Build a partial source from what we have in the patch for analysis
         # We use all added lines joined — this is enough for AST patterns
-        # on the changed code. Graph builder uses full file content (Week 4).
+        # on the changed code. Graph builder uses full file content (Week 4)
         partial_source = "\n".join(
             line
             for h in file_hunks

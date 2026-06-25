@@ -45,7 +45,7 @@ async def run_analysis(
     run_llm: bool = True,
 ) -> PRAnalysisResult:
     """
-    Full pipeline — called by the API route and the benchmark runner.
+    Full pipeline —> called by the API route and the benchmark runner
 
     1  Fetch PR metadata, files, diffs, dependency manifests from GitHub
     2  Parse changed hunks with AST (Python) or regex (JS/TS)
@@ -102,7 +102,7 @@ async def analyze(req: AnalyzeRequest) -> PRAnalysisResult:
 
 @app.get("/api/v1/pr/{owner}/{repo}/{pr_number}", response_model=PRInfo)
 async def get_pr(owner: str, repo: str, pr_number: int) -> PRInfo:
-    """Fetch PR metadata only — no analysis. Useful for previewing before submitting."""
+    """Fetch PR metadata"""
     try:
         async with GitHubClient() as gh:
             return await gh.get_pr(owner, repo, pr_number)

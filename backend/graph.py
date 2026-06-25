@@ -20,7 +20,7 @@ SECONDARY_KEYWORDS = {
 
 
 def _sensitivity(filename: str) -> str:
-    """Classify a file as critical / secondary / low based on its path."""
+    """Classify a file as critical/secondary/low based on its path"""
     low = filename.lower()
     if any(k in low for k in CRITICAL_KEYWORDS):
         return "critical"
@@ -33,9 +33,9 @@ class GraphBundle:
     """
     Holds the three graphs built from a PR and exposes blast-radius computation.
 
-    file_graph  — directed edges represent imports between files
-    call_graph  — directed edges represent function call relationships
-    sens_graph  — undirected edges connect files that share a security domain
+    file_graph  —> directed edges represent imports between files
+    call_graph  —> directed edges represent function call relationships
+    sens_graph  —> undirected edges connect files that share a security domain
     """
 
     def __init__(self):
@@ -45,9 +45,9 @@ class GraphBundle:
 
     def compute_blast_radius(self, changed_functions: list[str]) -> BlastRadius:
         """
-        BFS from each changed function through the call graph.
-        Classifies every reachable node into critical / secondary / low
-        based on the filename it belongs to.
+        BFS from each changed function through the call graph
+        Classifies every reachable node into critical/secondary/low
+        based on the filename it belongs to
         """
         if not changed_functions or self.call_graph.number_of_nodes() == 0:
             return BlastRadius()
@@ -78,7 +78,7 @@ class GraphBundle:
         )
 
     def affected_files(self, changed_files: list[str]) -> set[str]:
-        """BFS on file_graph from each changed file."""
+        """BFS on file_graph from each changed file"""
         affected: set[str] = set()
         for f in changed_files:
             if f in self.file_graph:
@@ -93,11 +93,11 @@ def build_graphs(parse_result: ParseResult, files: list[PRFile]) -> GraphBundle:
 
     File graph:   one node per file, edges from import relationships
     Call graph:   one node per "file::function", edges from call lists
-    Sensitivity:  connects files that share a security-sensitive keyword domain
+    Sensitivity:  connects files that share security-sensitive keyword domain
     """
     bundle = GraphBundle()
 
-    # File graph — nodes first
+    # File graph —> nodes first
     for f in files:
         if f.status != "removed":
             sensitivity = _sensitivity(f.filename)
@@ -109,7 +109,7 @@ def build_graphs(parse_result: ParseResult, files: list[PRFile]) -> GraphBundle:
                 deletions=f.deletions,
             )
 
-    # File graph — edges from import data
+    # File graph —> edges from import data
     # imports dict: {filename: [module_names]}
     # We map module names back to files where possible
     file_stems = {
@@ -123,7 +123,7 @@ def build_graphs(parse_result: ParseResult, files: list[PRFile]) -> GraphBundle:
             if target and target != filename:
                 bundle.file_graph.add_edge(filename, target, edge_type="import")
 
-    # Call graph — one node per qualified function name
+    # Call graph —> one node per qualified function name
     fn_by_name: dict[str, str] = {}  # bare_name -> qualified name (last wins, good enough)
     for fn in parse_result.functions:
         qualified = f"{fn.filename}::{fn.name}"
@@ -137,7 +137,7 @@ def build_graphs(parse_result: ParseResult, files: list[PRFile]) -> GraphBundle:
         )
         fn_by_name[fn.name] = qualified
 
-    # Call graph — edges from call lists
+    # Call graph —> edges from call lists
     for fn in parse_result.functions:
         caller = f"{fn.filename}::{fn.name}"
         for called_name in fn.calls:
@@ -145,7 +145,7 @@ def build_graphs(parse_result: ParseResult, files: list[PRFile]) -> GraphBundle:
             if callee and callee != caller:
                 bundle.call_graph.add_edge(caller, callee, edge_type="call")
 
-    # Sensitivity graph — connect files sharing a security domain
+    # Sensitivity graph -> connect files sharing a security domain
     # Groups files by the first matching critical keyword in their path
     domain_files: dict[str, list[str]] = {}
     for f in files:
@@ -166,7 +166,7 @@ def build_graphs(parse_result: ParseResult, files: list[PRFile]) -> GraphBundle:
 
 
 def graph_summary(bundle: GraphBundle) -> dict:
-    """Returns a compact summary dict for the LLM context and API response."""
+    """Returns a compact summary dict for the LLM context and API response"""
     return {
         "file_nodes": bundle.file_graph.number_of_nodes(),
         "file_edges": bundle.file_graph.number_of_edges(),

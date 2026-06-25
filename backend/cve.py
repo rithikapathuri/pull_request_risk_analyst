@@ -47,11 +47,11 @@ def _cvss_to_level(score: float) -> RiskLevel:
 def _extract_cvss(vuln: dict) -> float:
     """
     OSV records can carry severity in several different places depending on
-    the source database. Check all of them and return the highest score found.
+    source database -> check all and return highest score found
     """
     best = 0.0
 
-    # OSV severity array entries have a CVSS vector string — parse base score from it
+    # OSV severity array entries have a CVSS vector string —> parse base score from it
     for entry in vuln.get("severity", []):
         score_str = entry.get("score", "")
         # CVSS v3 vectors embed the base score as the first numeric segment after "CVSS:3.x/"
@@ -61,7 +61,7 @@ def _extract_cvss(vuln: dict) -> float:
         except ValueError:
             pass
 
-    # database_specific blocks vary by source (GitHub, OSV, NVD) — check common keys
+    # database_specific blocks vary by source (GitHub, OSV, NVD) —> check common keys
     db = vuln.get("database_specific", {})
     if isinstance(db, dict):
         for k, v in db.items():
@@ -142,11 +142,10 @@ async def check_dependencies(
 ) -> list[DependencyRisk]:
     """
     Queries OSV.dev for every dependency in raw_dependencies.
-    Runs all queries concurrently — a PR with 50 deps takes roughly the
-    same time as one with 5.
-
+    Runs all queries concurrently -> a PR with 50 deps takes roughly the
+    same time as one with 5
     Ecosystem is inferred from the manifest filename if provided,
-    defaulting to PyPI when unknown.
+    defaulting to PyPI when unknown
     """
     # Infer ecosystem from the first recognised manifest filename
     ecosystem = "PyPI"

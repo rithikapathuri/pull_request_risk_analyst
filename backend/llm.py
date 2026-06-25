@@ -1,10 +1,10 @@
 from __future__ import annotations
-import json
-import re
 import logging
 from typing import Optional
+from pydantic import BaseModel
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from backend.config import get_settings
@@ -16,8 +16,9 @@ from backend.models import (
 settings = get_settings()
 log = logging.getLogger(__name__)
 
-genai.configure(api_key=settings.gemini_api_key)
-_model = genai.GenerativeModel(settings.gemini_model)
+client = None
+if settings.gemini_api_key:
+    client = genai.Client(api_key=settings.gemini_api_key)
 
 # Category-specific guidance injected into the explanation prompt
 CATEGORY_FOCUS: dict[str, str] = {
@@ -31,18 +32,6 @@ CATEGORY_FOCUS: dict[str, str] = {
     "logic":          "Focus on business logic flaws, race conditions, state bugs",
     "low_risk":       "Confirm why this is low risk and what to watch for anyway",
 }
-
-
-def _strip_json(text: str) -> dict:
-    """Strip markdown fences and parse JSON — Gemini sometimes adds them."""
-    clean = re.sub(r"```(?:json)?|```", "", text).strip()
-    return json.loads(clean)
-
-
-@retry(stop=stop_after_attempt(settings.llm_max_retries), wait=wait_exponential(min=2, max=12), reraise=True)
-async def _call(prompt: str) -> str:
-    resp = await _model.generate_content_async(prompt)
-    return resp.text
 
 
 def _build_context(
@@ -79,69 +68,86 @@ def _build_context(
     )
 
 
+@retry(stop=stop_after_attempt(settings.llm_max_retries), wait=wait_exponential(min=2, max=12), reraise=True)
 async def _triage(context: str) -> Optional[LLMTriage]:
     prompt = (
         "You are a senior security engineer reviewing a pull request analysis.\n\n"
         f"{context}\n\n"
-        "Classify the PRIMARY risk category.\n"
-        "Respond ONLY with valid JSON, no markdown:\n"
-        '{"primary_risk_category": "injection|auth|supply_chain|crypto|access_control|data_exposure|config|logic|low_risk", '
-        '"confidence": "high|medium|low", "reasoning": "one sentence"}'
+        "Classify the PRIMARY risk category."
     )
     try:
-        return LLMTriage(**_strip_json(await _call(prompt)))
+        response = await client.aio.models.generate_content(
+            model=settings.gemini_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=LLMTriage,
+            )
+        )
+        return response.parsed
     except Exception as e:
         log.warning("triage failed: %s", e)
         return None
 
 
+@retry(stop=stop_after_attempt(settings.llm_max_retries), wait=wait_exponential(min=2, max=12), reraise=True)
 async def _explain(context: str, category: str) -> Optional[LLMExplanation]:
     focus = CATEGORY_FOCUS.get(category, "Explain the security implications")
     prompt = (
         "You are a senior security engineer writing a code review.\n\n"
         f"{context}\n\n"
-        f"{focus}\n\n"
-        "Respond ONLY with valid JSON, no markdown:\n"
-        '{"summary": "2-3 sentences in plain language", '
-        '"what_could_break": ["2-4 specific things that could be exploited or fail"], '
-        '"attack_surface": "one sentence", '
-        '"severity_justification": "one sentence"}'
+        f"{focus}\n"
     )
     try:
-        return LLMExplanation(**_strip_json(await _call(prompt)))
+        response = await client.aio.models.generate_content(
+            model=settings.gemini_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=LLMExplanation,
+            )
+        )
+        return response.parsed
     except Exception as e:
         log.warning("explanation failed: %s", e)
         return None
 
 
+@retry(stop=stop_after_attempt(settings.llm_max_retries), wait=wait_exponential(min=2, max=12), reraise=True)
 async def _recommend(context: str, explanation: Optional[LLMExplanation]) -> Optional[LLMRecommendations]:
     summary = explanation.summary if explanation else "See analysis"
     prompt = (
         "You are a senior security engineer giving actionable fix advice.\n\n"
         f"{context}\n\n"
         f"Risk summary: {summary}\n\n"
-        "Respond ONLY with valid JSON, no markdown:\n"
-        '{"immediate_fixes": ["2-4 specific code changes to make before merging"], '
-        '"longer_term": ["1-3 architectural improvements"], '
-        '"safe_to_merge": false}'
-        f'\n\nSet safe_to_merge to true only if final_score < 35'
+        "Set safe_to_merge to true only if final_score < 35"
     )
     try:
-        return LLMRecommendations(**_strip_json(await _call(prompt)))
+        response = await client.aio.models.generate_content(
+            model=settings.gemini_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=LLMRecommendations,
+            )
+        )
+        return response.parsed
     except Exception as e:
         log.warning("recommendations failed: %s", e)
         return None
 
 
+# Inline model to capture the ambiguous signal check natively
+class SignalVerdict(BaseModel):
+    confirmed_risky: bool
+    verdict: str
+
+
+@retry(stop=stop_after_attempt(settings.llm_max_retries), wait=wait_exponential(min=2, max=12), reraise=True)
 async def _review_ambiguous(
     summaries: list[SecuritySignalSummary],
     context: str,
 ) -> list[SecuritySignalSummary]:
-    """
-    Second-pass review of signals marked is_ambiguous=True.
-    The static rule engine can't tell whether subprocess.run() is
-    exploitable in context — Gemini can.
-    """
     for item in summaries:
         if not item.signal.is_ambiguous:
             continue
@@ -152,14 +158,21 @@ async def _review_ambiguous(
             f"Flagged pattern: {sig.signal_type}\n"
             f"File: {sig.filename}, line {sig.line}\n"
             f"Code: {sig.snippet}\n\n"
-            "Is this actually exploitable in context?\n"
-            "Respond ONLY with valid JSON, no markdown:\n"
-            '{"confirmed_risky": true, "verdict": "one sentence"}'
+            "Is this actually exploitable in context?"
         )
         try:
-            data = _strip_json(await _call(prompt))
-            item.confirmed_risky = data.get("confirmed_risky", True)
-            item.llm_verdict = data.get("verdict", "")
+            response = await client.aio.models.generate_content(
+                model=settings.gemini_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=SignalVerdict,
+                )
+            )
+            data = response.parsed
+            if data:
+                item.confirmed_risky = data.confirmed_risky
+                item.llm_verdict = data.verdict
         except Exception as e:
             log.warning("signal review failed for %s: %s", sig.signal_type, e)
             item.confirmed_risky = True  # conservative default
@@ -180,7 +193,7 @@ async def run_llm_chain(
     Optional[LLMRecommendations],
     list[SecuritySignalSummary],
 ]:
-    if not settings.gemini_api_key:
+    if not settings.gemini_api_key or not client:
         log.warning("GEMINI_API_KEY not set — skipping LLM chain")
         return None, None, None, signal_summaries
 

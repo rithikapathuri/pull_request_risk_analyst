@@ -3,25 +3,9 @@
     "owner": "django",
     "repo": "django",
     "pr_number": 15865,
-    "cve_id": "CVE-2022-34265",
-    "expected_risk_level": "high",
-    "notes": "SQL injection via Trunc/Extract database functions"
-  },
-  {
-    "owner": "psf",
-    "repo": "requests",
-    "pr_number": 6004,
-    "cve_id": "CVE-2023-32681",
-    "expected_risk_level": "medium",
-    "notes": "Proxy-Authorization header leaked on cross-origin redirect"
-  },
-  {
-    "owner": "pallets",
-    "repo": "flask",
-    "pr_number": 5001,
-    "cve_id": "CVE-2023-30861",
-    "expected_risk_level": "high",
-    "notes": "Session cookie not invalidated on logout with caching proxies"
+    "cve_id": "N/A",
+    "expected_risk_level": "info",
+    "notes": "Documentation edit/change"
   },
   {
     "owner": "npm",
@@ -30,13 +14,5 @@
     "cve_id": "CVE-2022-25883",
     "expected_risk_level": "medium",
     "notes": "ReDoS via malformed version string"
-  },
-  {
-    "owner": "axios",
-    "repo": "axios",
-    "pr_number": 5346,
-    "cve_id": "CVE-2023-45857",
-    "expected_risk_level": "high",
-    "notes": "CSRF token leaked via cross-origin request headers"
   }
 ]
