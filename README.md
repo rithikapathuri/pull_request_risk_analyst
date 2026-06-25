@@ -8,11 +8,25 @@ Instead of blindly flagging every vulnerable dependency in a repository, this to
 ## How to Run
 
 ### 1. **Install dependencies:**
+Clone repository and create virtual environment
+```bash
+cd pull_request_risk_analyst
+
+python -m venv venv
+
+# Mac / Linux
+source venv/bin/activate
+
+# Windows
+venv\Scripts\activate
+```
+
+### 2. **Install dependencies:**
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. **Configure Environment:**
+### 3. **Configure Environment:**
 
 Create a .env file in the root directory and add your API keys:
 ```bash
@@ -21,9 +35,9 @@ GEMINI_API_KEY=""
 NVD_API_KEY=""
 ```
 
-### 3. **Start the API Server:**
+### 4. **Start the API Server:**
 
-From the root of the project (/), run the FastAPI development server:
+From the root of the project (pull_request_risk_analyst/), run the FastAPI development server:
 ```bash
 uvicorn backend.main:app --reload --port 8000
 ```
