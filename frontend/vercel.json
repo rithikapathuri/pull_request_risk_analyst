@@ -1,8 +1,8 @@
 {
-    "buildCommand": "npm run build",
-    "outputDirectory": "dist",
-    "framework": "vite",
-    "rewrites": [
-      { "source": "/api/(.*)", "destination": "https://pr-risk-autopilot-api.onrender.com" }
-    ]
-  }
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://pr-risk-autopilot-api.onrender.com/api/$1" }
+  ]
+}
