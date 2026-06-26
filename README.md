@@ -3,9 +3,17 @@
 ## Goal
 A context-aware Pull Request gatekeeper designed to eliminate "alert fatigue" in security scanning. 
 
-Instead of blindly flagging every vulnerable dependency in a repository, this tool combines **targeted static parsing**, **blast radius calculation**, and **reachability analysis** to determine if the specific code changed in a PR actually calls a vulnerable function. It assigns a deterministic risk score to every PR and uses LLM-powered triage to provide actionable remediation steps.
+Instead of blindly flagging every vulnerable dependency in a repository, this tool combines **targeted static parsing**, **blast radius calculation**, and **reachability analysis** to determine if the specific code changed in a PR actually calls a vulnerable function. It assigns a deterministic risk score to every PR and uses LLM-powered triage to provide actionable remediation steps.  
 
-## How to Run
+
+
+## Deployed Application
+
+You can access the hosted version of the Pull Request Risk Analyst directly through your browser:  
+https://pull-request-risk-analyst.vercel.app  
+
+
+## Running application locally
 
 ### 1. **Clone repository and create virtual environment:**
 ```bash
