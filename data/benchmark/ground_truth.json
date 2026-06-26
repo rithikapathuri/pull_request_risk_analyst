@@ -1,18 +1,10 @@
 [
   {
-    "owner": "django",
-    "repo": "django",
-    "pr_number": 15865,
-    "cve_id": "N/A",
-    "expected_risk_level": "info",
-    "notes": "Documentation edit/change"
-  },
-  {
-    "owner": "npm",
-    "repo": "node-semver",
-    "pr_number": 564,
-    "cve_id": "CVE-2022-25883",
-    "expected_risk_level": "medium",
-    "notes": "ReDoS via malformed version string"
+    "owner": "argoproj",
+    "repo": "argo-workflows",
+    "pr_number": 13021,
+    "cve_id": "CVE-2024-53862",
+    "expected_risk_level": "critical",
+    "notes": "Accidental deletion of RBAC auth check for archived workflows"
   }
 ]
