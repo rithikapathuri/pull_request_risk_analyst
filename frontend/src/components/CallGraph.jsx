@@ -128,7 +128,7 @@ export default function CallGraph({ graphData, loading, error }) {
   return (
     <div className="panel flex flex-col" style={{ minHeight: 420 }}>
       <div className="px-6 pt-6 pb-4 flex items-center justify-between flex-shrink-0">
-        <span className="label">Call Graph</span>
+        <span className="label">{graphData?.type === "file" ? "File Dependency Graph" : "Call Graph"}</span>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-3 text-xs text-muted">
             <span className="flex items-center gap-1.5">

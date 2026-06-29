@@ -24,7 +24,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "https://pr-risk-autopilot.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,7 +45,7 @@ async def run_analysis(
     run_llm: bool = True,
 ) -> PRAnalysisResult:
     """
-    Full pipeline —> called by the API route and the benchmark runner.
+    Full pipeline — called by the API route and the benchmark runner.
 
     1  Fetch PR metadata, files, diffs, dependency manifests from GitHub
     2  Parse changed hunks with AST (Python) or regex (JS/TS)
@@ -107,7 +107,7 @@ async def analyze(req: AnalyzeRequest) -> PRAnalysisResult:
 
 @app.get("/api/v1/pr/{owner}/{repo}/{pr_number}", response_model=PRInfo)
 async def get_pr(owner: str, repo: str, pr_number: int) -> PRInfo:
-    """Fetch PR metadata only — no analysis. Useful for previewing before submitting"""
+    """Fetch PR metadata only — no analysis. Useful for previewing before submitting."""
     try:
         async with GitHubClient() as gh:
             return await gh.get_pr(owner, repo, pr_number)
@@ -122,3 +122,49 @@ async def health() -> dict:
         "env": settings.app_env,
         "llm_enabled": bool(settings.gemini_api_key),
     }
+
+
+@app.post("/api/v1/graph")
+async def get_graph_data(req: AnalyzeRequest) -> dict:
+    async with GitHubClient() as gh:
+        pr_info = await gh.get_pr(req.owner, req.repo, req.pr_number)
+
+    hunks        = parse_diff_hunks(pr_info.files)
+    parse_result = parse_pr(pr_info.files, hunks)
+    graphs       = build_graphs(parse_result, pr_info.files)
+
+    # Use call graph when available (Python/JS), fall back to file graph for all other languages
+    use_call_graph = graphs.call_graph.number_of_nodes() > 0
+    g = graphs.call_graph if use_call_graph else graphs.file_graph
+
+    nodes = []
+    for node_id, data in g.nodes(data=True):
+        if use_call_graph:
+            label = node_id.split("::")[-1] if "::" in node_id else node_id
+            filename = data.get("filename", "")
+        else:
+            # File graph nodes are filenames — use basename as label
+            label = node_id.split("/")[-1]
+            filename = node_id
+
+        nodes.append({
+            "data": {
+                "id": node_id,
+                "label": label,
+                "filename": filename,
+                "is_changed": data.get("is_changed", False),
+                "sensitivity": data.get("sensitivity", "low"),
+            }
+        })
+
+    edges = []
+    for src, dst, data in g.edges(data=True):
+        edges.append({
+            "data": {
+                "id": f"{src}->{dst}",
+                "source": src,
+                "target": dst,
+            }
+        })
+
+    return {"nodes": nodes, "edges": edges, "type": "call" if use_call_graph else "file"}

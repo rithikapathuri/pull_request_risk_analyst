@@ -56,8 +56,8 @@ export default function App() {
         )}
 
         {loading && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {[...Array(3)].map((_, i) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[...Array(4)].map((_, i) => (
               <div key={i} className="panel p-6 h-40 animate-pulse">
                 <div className="h-3 w-20 bg-border rounded mb-4" />
                 <div className="h-4 w-3/4 bg-border rounded mb-2" />
@@ -69,15 +69,18 @@ export default function App() {
 
         {result && !loading && (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* PR info and risk score side by side — both compact */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <PRMeta pr={result.pr} />
               <RiskScore breakdown={result.risk_breakdown} />
-              <AIPanel
-                triage={result.triage}
-                explanation={result.explanation}
-                recommendations={result.recommendations}
-              />
             </div>
+
+            {/* AI panel full width — content is too long for a column */}
+            <AIPanel
+              triage={result.triage}
+              explanation={result.explanation}
+              recommendations={result.recommendations}
+            />
 
             <BlastRadius blastRadius={result.blast_radius} />
             <SignalsTable summaries={result.security_signal_summaries} />
@@ -87,9 +90,9 @@ export default function App() {
               {!graphData && !graphLoading && (
                 <div className="panel p-6 flex items-center justify-between">
                   <div>
-                    <span className="label block mb-1">Call Graph</span>
+                    <span className="label block mb-1">Dependency Graph</span>
                     <p className="text-sm text-muted">
-                      Visualize function call relationships and blast radius across changed files
+                      Visualize file relationships and blast radius across changed files
                     </p>
                   </div>
                   <button className="btn-primary flex-shrink-0 ml-4" onClick={handleLoadGraph}>

@@ -28,15 +28,15 @@ export default function SearchForm({ onSubmit, loading }) {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="flex flex-col gap-1.5">
           <label className="label">Owner</label>
-          <input className={inputClass} placeholder="django" value={owner} onChange={e => setOwner(e.target.value)} required />
+          <input className={inputClass} placeholder="argoproj" value={owner} onChange={e => setOwner(e.target.value)} required />
         </div>
         <div className="flex flex-col gap-1.5">
           <label className="label">Repository</label>
-          <input className={inputClass} placeholder="django" value={repo} onChange={e => setRepo(e.target.value)} required />
+          <input className={inputClass} placeholder="argo-workflows" value={repo} onChange={e => setRepo(e.target.value)} required />
         </div>
         <div className="flex flex-col gap-1.5">
           <label className="label">PR Number</label>
-          <input className={inputClass} placeholder="15865" type="number" min="1" value={prNumber} onChange={e => setPrNumber(e.target.value)} required />
+          <input className={inputClass} placeholder="13021" type="number" min="1" value={prNumber} onChange={e => setPrNumber(e.target.value)} required />
         </div>
       </div>
 
