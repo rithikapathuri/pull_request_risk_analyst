@@ -1,4 +1,4 @@
-# PR Risk Autopilot
+# PR Risk Analyst
 
 A pull request security intelligence system that goes beyond dependency scanning. Instead of flagging every vulnerable package in a repository, it determines whether the specific code changed in a PR actually reaches a vulnerable function, eliminating the false positives that cause alert fatigue in real security workflows.
 

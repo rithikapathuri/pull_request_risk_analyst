@@ -41,7 +41,7 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-border px-6 py-4 flex items-center gap-3">
-        <span className="text-sm font-semibold text-text">PR Risk Autopilot</span>
+        <span className="text-sm font-semibold text-text">PR Risk Analyst</span>
         <span className="text-muted text-xs">·</span>
         <span className="text-xs text-muted">GitHub pull request security analysis</span>
       </header>
@@ -109,7 +109,7 @@ export default function App() {
       </main>
 
       <footer className="border-t border-border px-6 py-3 text-xs text-muted">
-        <span>PR Risk Autopilot</span>
+        <span>PR Risk Analyst</span>
       </footer>
     </div>
   )
