@@ -133,6 +133,7 @@ class GitHubClient:
             author=pr_data["user"]["login"],
             base_branch=pr_data["base"]["ref"],
             head_branch=pr_data["head"]["ref"],
+            head_sha=head_sha,
             files=pr_files,
             dependency_files=dep_filenames,
             raw_dependencies=head_deps,

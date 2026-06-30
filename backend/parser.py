@@ -7,9 +7,7 @@ from backend.models import (
     PRFile, DiffHunk, ParseResult, FunctionNode, SecuritySignal, RiskLevel,
 )
 
-
 SIGNAL_SEVERITY: dict[str, tuple[RiskLevel, bool]] = {
-    # (severity, is_ambiguous)
     "eval_usage":            (RiskLevel.CRITICAL, False),
     "exec_usage":            (RiskLevel.CRITICAL, False),
     "compile_usage":         (RiskLevel.HIGH,     False),
@@ -31,10 +29,8 @@ SIGNAL_SEVERITY: dict[str, tuple[RiskLevel, bool]] = {
     "auth_modified":         (RiskLevel.MEDIUM,   True),
     "weak_cipher":           (RiskLevel.HIGH,     False),
     "globals_usage":         (RiskLevel.MEDIUM,   True),
-    # Deletion signals —> security controls being removed
     "security_control_removed": (RiskLevel.HIGH,  False),
     "auth_check_removed":       (RiskLevel.CRITICAL, False),
-    # IaC signals
     "iac_privileged_container": (RiskLevel.HIGH,  False),
     "iac_root_user":            (RiskLevel.HIGH,  False),
     "iac_secret_in_env":        (RiskLevel.CRITICAL, False),
@@ -43,15 +39,9 @@ SIGNAL_SEVERITY: dict[str, tuple[RiskLevel, bool]] = {
 }
 
 REGEX_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(
-        r'(?:password|passwd|pwd|secret|api_key|apikey|token|auth_token)\s*=\s*["\'][^"\']{6,}["\']',
-        re.IGNORECASE,
-    ), "hardcoded_secret"),
+    (re.compile(r'(?:password|passwd|pwd|secret|api_key|apikey|token|auth_token)\s*=\s*["\'][^"\']{6,}["\']', re.IGNORECASE), "hardcoded_secret"),
     (re.compile(r'Bearer\s+[A-Za-z0-9\-_.]{20,}', re.IGNORECASE), "hardcoded_token"),
-    (re.compile(
-        r'(?:SELECT|INSERT|UPDATE|DELETE|DROP)\s.*?(?:%s|%\(|\+\s*[a-zA-Z]|\.format\(|f["\'].*?\{)',
-        re.IGNORECASE,
-    ), "raw_sql"),
+    (re.compile(r'(?:SELECT|INSERT|UPDATE|DELETE|DROP)\s.*?(?:%s|%\(|\+\s*[a-zA-Z]|\.format\(|f["\'].*?\{)', re.IGNORECASE), "raw_sql"),
     (re.compile(r'cursor\.execute\s*\(\s*["\'].*?%[sd]', re.IGNORECASE), "raw_sql"),
     (re.compile(r'subprocess\.\w+\s*\(.*?shell\s*=\s*True', re.IGNORECASE | re.DOTALL), "subprocess"),
     (re.compile(r'os\.system\s*\(', re.IGNORECASE), "os_system"),
@@ -74,7 +64,6 @@ REGEX_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r'\bimport\s+(?:cryptography|Crypto|nacl|bcrypt)\b', re.IGNORECASE), "crypto_modified"),
 ]
 
-# Function names that indicate removal of security control when deleted
 AUTH_CHECK_PATTERNS = re.compile(
     r'\b(?:check_permission|require_auth|login_required|permission_required|'
     r'verify_token|authenticate|authorize|check_auth|enforce_policy|'
@@ -95,16 +84,12 @@ SENSITIVE_AUTH_PATHS = {
     "role", "privilege", "admin", "token",
 }
 
-# IaC patterns —> applied to YAML, Dockerfile, and GitHub Actions files
 IAC_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r'privileged\s*:\s*true', re.IGNORECASE), "iac_privileged_container"),
     (re.compile(r'runAsUser\s*:\s*0\b'), "iac_root_user"),
     (re.compile(r'USER\s+root\b', re.IGNORECASE), "iac_root_user"),
     (re.compile(r'--privileged'), "iac_privileged_container"),
-    (re.compile(
-        r'(?:AWS_SECRET|GITHUB_TOKEN|API_KEY|SECRET_KEY|PRIVATE_KEY)\s*[=:]\s*\S+',
-        re.IGNORECASE,
-    ), "iac_secret_in_env"),
+    (re.compile(r'(?:AWS_SECRET|GITHUB_TOKEN|API_KEY|SECRET_KEY|PRIVATE_KEY)\s*[=:]\s*\S+', re.IGNORECASE), "iac_secret_in_env"),
     (re.compile(r'curl\s+.*?\|\s*(?:bash|sh)\b', re.IGNORECASE), "iac_dangerous_workflow"),
     (re.compile(r'wget\s+.*?-O\s*-\s*\|\s*(?:bash|sh)\b', re.IGNORECASE), "iac_dangerous_workflow"),
     (re.compile(r'run:\s*\|?\s*\n?\s*(?:curl|wget).*?\|\s*(?:bash|sh)', re.IGNORECASE | re.DOTALL), "iac_dangerous_workflow"),
@@ -133,17 +118,10 @@ def _make_signal(
         is_deletion=is_deletion,
     )
 
-
 def _line_in_hunks(lineno: int, ranges: list[tuple[int, int]]) -> bool:
     return any(start <= lineno <= end for start, end in ranges)
 
-
 def _scan_deleted_lines(filename: str, hunks: list[DiffHunk]) -> list[SecuritySignal]:
-    """
-    Scans removed lines for security controls being deleted
-    A deleted auth check or validation call is high-risk even when
-    no new dangerous code is added
-    """
     signals: list[SecuritySignal] = []
     seen: set[tuple[int, str]] = set()
 
@@ -168,12 +146,7 @@ def _scan_deleted_lines(filename: str, hunks: list[DiffHunk]) -> list[SecuritySi
 
     return signals
 
-
 def _scan_iac(filename: str, hunks: list[DiffHunk]) -> list[SecuritySignal]:
-    """
-    Scans YAML, Dockerfile, and Terraform added lines for insecure configurations
-    These files are invisible to AST parsers but carry serious risk
-    """
     signals: list[SecuritySignal] = []
     seen: set[tuple[int, str]] = set()
 
@@ -193,7 +166,6 @@ def _scan_iac(filename: str, hunks: list[DiffHunk]) -> list[SecuritySignal]:
 
     return signals
 
-
 class PythonASTParser(ast.NodeVisitor):
     def __init__(self, filename: str, source_lines: list[str], hunk_ranges: list[tuple[int, int]]):
         self.filename = filename
@@ -211,13 +183,14 @@ class PythonASTParser(ast.NodeVisitor):
         return _line_in_hunks(lineno, self.hunk_ranges)
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
+        fn_end = node.end_lineno or node.lineno
         fn = FunctionNode(
             name=node.name,
             filename=self.filename,
             start_line=node.lineno,
-            end_line=node.end_lineno or node.lineno,
+            end_line=fn_end,
             is_changed=any(
-                start <= node.lineno <= end or start <= (node.end_lineno or node.lineno) <= end
+                start <= fn_end and end >= node.lineno
                 for start, end in self.hunk_ranges
             ),
         )
@@ -282,7 +255,6 @@ class PythonASTParser(ast.NodeVisitor):
 
         self.generic_visit(node)
 
-
 def _parse_python(
     filename: str,
     source: str,
@@ -314,7 +286,6 @@ def _parse_python(
                 break
 
     return visitor.functions, signals
-
 
 def _parse_js_ts(
     filename: str,
@@ -358,7 +329,6 @@ def _parse_js_ts(
 
     return functions, signals
 
-
 def _extract_imports(filename: str, source: str) -> list[str]:
     imports: list[str] = []
     ext = Path(filename).suffix.lower()
@@ -381,21 +351,11 @@ def _extract_imports(filename: str, source: str) -> list[str]:
 
     return list(set(imports))
 
-
 def _is_iac_file(filename: str) -> bool:
     p = Path(filename)
     return p.suffix.lower() in IAC_EXTENSIONS or p.name in IAC_FILENAMES or "github/workflows" in filename.lower()
 
-
-def parse_pr(files: list[PRFile], hunks: list[DiffHunk]) -> ParseResult:
-    """
-    Parses changed files and extracts:
-    - Function nodes and call relationships (for call graph)
-    - Security signals from ADDED lines (new vulnerabilities introduced)
-    - Security signals from DELETED lines (security controls being removed)
-    - IaC signals from config/workflow files
-    - Raw patches per file passed through to the LLM for full diff context
-    """
+def parse_pr(files: list[PRFile], hunks: list[DiffHunk], full_sources: dict[str, str]) -> ParseResult:
     all_functions: list[FunctionNode] = []
     all_signals: list[SecuritySignal] = []
     all_imports: dict[str, list[str]] = {}
@@ -406,18 +366,14 @@ def parse_pr(files: list[PRFile], hunks: list[DiffHunk]) -> ParseResult:
         if not f.patch:
             continue
 
-        # Always store the raw patch so the LLM gets full diff context
         file_patches[f.filename] = f.patch
-
         file_hunks = [h for h in hunks if h.filename == f.filename]
         hunk_ranges = [(h.start_line, h.end_line) for h in file_hunks]
 
-        # Scan deleted lines for removed security controls —> applies to all file types
         if f.status != "added":
             deletion_signals = _scan_deleted_lines(f.filename, file_hunks)
             all_signals.extend(deletion_signals)
 
-        # IaC files get their own scanner
         if _is_iac_file(f.filename):
             all_signals.extend(_scan_iac(f.filename, file_hunks))
             continue
@@ -431,27 +387,23 @@ def parse_pr(files: list[PRFile], hunks: list[DiffHunk]) -> ParseResult:
         if f.status == "removed":
             continue
 
-        # Build partial source from added lines for AST/regex analysis
-        partial_source = "\n".join(
-            line for h in file_hunks for line in h.added_lines
-        )
-        if not partial_source.strip():
+        source = full_sources.get(f.filename)
+        if not source:
             continue
 
         if ext == ".py":
-            fns, sigs = _parse_python(f.filename, partial_source, hunk_ranges)
+            fns, sigs = _parse_python(f.filename, source, hunk_ranges)
         else:
-            fns, sigs = _parse_js_ts(f.filename, partial_source, hunk_ranges)
+            fns, sigs = _parse_js_ts(f.filename, source, hunk_ranges)
 
         if any(kw in f.filename.lower() for kw in SENSITIVE_AUTH_PATHS):
             sigs.append(_make_signal(f.filename, 0, "auth_modified", f.filename))
 
         all_functions.extend(fns)
         all_signals.extend(sigs)
-        all_imports[f.filename] = _extract_imports(f.filename, partial_source)
+        all_imports[f.filename] = _extract_imports(f.filename, source)
         changed_fn_names.extend(fn.name for fn in fns if fn.is_changed)
 
-    # Deduplicate by (filename, line, type, is_deletion)
     seen: set[tuple[str, int, str, bool]] = set()
     unique_signals: list[SecuritySignal] = []
     for s in all_signals:

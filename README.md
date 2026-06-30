@@ -22,19 +22,19 @@ This project explores contextual risk analysis based on actual code execution pa
 
 ## System Architecture
 
-The system is implemented as a multi-stage analysis pipeline that processes pull requests from ingestion through risk scoring.
+The system is implemented as a multi-stage analysis pipeline that operates in a **Dual-Mode Architecture**: a stateless cloud webhook for instant CI/CD PR checks, and a local CLI runner for deep, repository-wide analysis.
 
 ### 1. Ingestion
-Fetches pull request metadata from the GitHub API, including diffs, changed files, and dependency manifests. It also compares dependency files between commits to identify newly introduced packages.
+Fetches pull request metadata from the GitHub API, including diffs, changed files, and dependency manifests. To guarantee parsing integrity, it fetches the full file contents locked to the immutable `head_sha`. In local CLI mode, it bypasses the network entirely, using `subprocess` to extract local Git diffs and traversing the local file system.
 
 ### 2. Diff-aware parsing
-Analyzes only modified sections of code instead of scanning entire files. Uses Python AST parsing to detect risky patterns such as:
+Analyzes the full source files to ensure Abstract Syntax Tree (AST) integrity, then mathematically intersects findings with the modified diff line ranges. It uses Python AST to detect risky patterns such as:
 - eval
 - pickle.loads
 - unsafe YAML loading
 - subprocess calls with shell execution enabled
 
-For JavaScript and TypeScript, regex-based detection is used. Deleted lines are also analyzed to capture removed security checks.
+For JavaScript and TypeScript, regex-based detection is used. Deleted lines are uniquely analyzed to capture the removal of critical security controls (e.g., deleted authentication checks).
 
 ### 3. Infrastructure-as-Code scanning
 Scans Dockerfiles, GitHub Actions workflows, and Kubernetes manifests for misconfigurations such as:
@@ -43,23 +43,25 @@ Scans Dockerfiles, GitHub Actions workflows, and Kubernetes manifests for miscon
 - exposed secrets in environment variables
 - unsafe shell execution patterns
 
-### 4. Dependency graph construction
-Builds file-level and function-level dependency graphs using NetworkX. When full call graph resolution is not possible, a file-level graph is used to preserve cross-module relationships.
+### 4. Semantic Blast Radius & Graph Construction
+Builds file-level and function-level dependency graphs using NetworkX. Risk impact is evaluated dynamically:
+- **Cloud Mode (Semantic Analysis):** Blast radius is determined deterministically by analyzing actual file imports (e.g., `bcrypt`, `sqlalchemy`) and execution behaviors, completely ignoring fragile filename conventions.
+- **Local CLI Mode (Graph Centrality):** Builds a global repository graph and uses mathematical `in_degree_centrality` to calculate an accurate blast radius based on how many modules rely on the modified code.
 
-### 5. CVE matching
-Queries OSV.dev for known vulnerabilities in dependencies and maps them to CVSS severity scores. Newly introduced packages are checked for potential typosquatting using string similarity comparisons.
+### 5. CVE Matching & NVD Enrichment
+Queries OSV.dev for known vulnerabilities in dependencies. It then concurrently enriches these findings via the **NVD API** (using async semaphores to respect rate limits) to attach highly accurate CVSS base scores and descriptions. Newly introduced packages are also checked for potential typosquatting using string similarity edit-distance algorithms.
 
 ### 6. Reachability analysis
-Performs graph traversal from modified functions to determine whether execution paths can reach vulnerable functions in dependencies. Vulnerabilities that are not reachable are down-weighted rather than removed entirely.
+Performs Depth-First Search (DFS) graph traversal from modified functions to determine whether execution paths can reach vulnerable functions in dependencies. Vulnerabilities that are completely isolated are mathematically down-weighted rather than removed entirely.
 
-### 7. Risk scoring
-Applies a deterministic scoring function that combines:
+### 7. Deterministic Risk Scoring
+Applies a strict scoring function that mathematically combines:
 - severity of code changes
 - blast radius of modified components
-- static security signals
-- dependency risk
+- static security signals (heavily penalizing removed security controls)
+- dependency risk (mitigated by reachability)
 
-The scoring logic is fully deterministic and does not rely on LLMs. This ensures consistent results across runs and avoids variability in risk classification.
+The scoring logic is fully deterministic and does not rely on LLMs, ensuring consistent results across runs.
 
 ---
 
@@ -70,20 +72,20 @@ An optional Gemini Flash-based module provides:
 - natural language explanation
 - remediation suggestions
 
-This layer is used only for explanation and does not affect the underlying risk score.
+This layer is used exclusively for human-readable synthesis and context, and it does not generate or alter the underlying risk score.
 
 ---
 
 ## Stack
 
 **Backend**
-Python, FastAPI, NetworkX, httpx, Pydantic, Tenacity
+Python, FastAPI, NetworkX, httpx, Pydantic, Tenacity, argparse
 
 **Frontend**
 React, Vite, Tailwind CSS, Cytoscape.js
 
 **Security data**
-OSV.dev for CVE data
+OSV.dev, National Vulnerability Database (NVD) API
 
 **LLM layer**
 Gemini 2.5 Flash via google-genai SDK
@@ -126,7 +128,12 @@ npm install
 npm run dev
 ```
 
-### 6. Run benchmark
+### 6. Run CLI -> Local Repository Mode
+```bash
+python -m backend.cli --repo /path/to/your/project --branch main --llm
+```
+
+### 7. Run benchmark
 ```bash
 python -m backend.benchmark
 python -m backend.benchmark --llm
@@ -139,6 +146,7 @@ Benchmark results are stored in data/benchmark/latest_results.json
 ```bash
 backend/
   main.py
+  cli.py
   config.py
   models.py
   github.py

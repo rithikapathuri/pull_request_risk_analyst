@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 from pathlib import Path
+from typing import Optional
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -10,7 +11,9 @@ from backend.models import CVERecord, DependencyRisk, RiskLevel
 
 settings = get_settings()
 
-# OSV ecosystem name per manifest filename
+# throttle NVD API requests to prevent 429 Too Many Requests errors
+_NVD_SEMAPHORE = asyncio.Semaphore(5)
+
 ECOSYSTEM_BY_FILE: dict[str, str] = {
     "requirements.txt":     "PyPI",
     "requirements-dev.txt": "PyPI",
@@ -27,14 +30,12 @@ ECOSYSTEM_BY_FILE: dict[str, str] = {
     "pom.xml":              "Maven",
 }
 
-# Fallback severity mapping when CVSS score is absent
 _TEXT_TO_LEVEL: dict[str, RiskLevel] = {
     "CRITICAL": RiskLevel.CRITICAL,
     "HIGH":     RiskLevel.HIGH,
     "MEDIUM":   RiskLevel.MEDIUM,
     "LOW":      RiskLevel.LOW,
 }
-
 
 def _cvss_to_level(score: float) -> RiskLevel:
     if score >= 9.0: return RiskLevel.CRITICAL
@@ -43,25 +44,15 @@ def _cvss_to_level(score: float) -> RiskLevel:
     if score > 0:    return RiskLevel.LOW
     return RiskLevel.INFO
 
-
 def _extract_cvss(vuln: dict) -> float:
-    """
-    OSV records can carry severity in several different places depending on
-    the source database. Check all of them and return the highest score found.
-    """
     best = 0.0
-
-    # OSV severity array entries have a CVSS vector string —> parse base score from it
     for entry in vuln.get("severity", []):
         score_str = entry.get("score", "")
-        # CVSS v3 vectors embed the base score as the first numeric segment after "CVSS:3.x/"
-        # Some OSV entries use a plain float string instead
         try:
             best = max(best, float(score_str))
         except ValueError:
             pass
 
-    # database_specific blocks vary by source (GitHub, OSV, NVD) —> check common keys
     db = vuln.get("database_specific", {})
     if isinstance(db, dict):
         for k, v in db.items():
@@ -77,16 +68,13 @@ def _extract_cvss(vuln: dict) -> float:
                         RiskLevel.LOW:      2.0,
                     }
                     best = max(best, score_map.get(level, 0.0))
-
     return best
-
 
 def _extract_cve_id(vuln: dict) -> str:
     for alias in vuln.get("aliases", []):
         if alias.startswith("CVE-"):
             return alias
     return vuln.get("id", "UNKNOWN")
-
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
 async def _query_osv(client: httpx.AsyncClient, package: str, version: str, ecosystem: str) -> list[dict]:
@@ -99,6 +87,43 @@ async def _query_osv(client: httpx.AsyncClient, package: str, version: str, ecos
         return resp.json().get("vulns", [])
     return []
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
+async def _query_nvd(client: httpx.AsyncClient, cve_id: str) -> Optional[dict]:
+    if not settings.nvd_api_key:
+        return None
+        
+    url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={cve_id}"
+    headers = {"apiKey": settings.nvd_api_key}
+    
+    # Restrict concurrent outgoing calls using the semaphore lock
+    async with _NVD_SEMAPHORE:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            vulns = data.get("vulnerabilities", [])
+            if vulns:
+                return vulns[0].get("cve", {})
+    return None
+
+def _enrich_from_nvd(cve_record: CVERecord, nvd_data: dict) -> None:
+    metrics = nvd_data.get("metrics", {})
+    best_score = cve_record.cvss_score
+    
+    for metric_version in ["cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]:
+        metric_list = metrics.get(metric_version, [])
+        if metric_list:
+            data = metric_list[0].get("cvssData", {})
+            score = data.get("baseScore")
+            if score and score > best_score:
+                best_score = score
+                cve_record.cvss_score = score
+            break
+            
+    descriptions = nvd_data.get("descriptions", [])
+    for desc in descriptions:
+        if desc.get("lang") == "en":
+            cve_record.description = desc.get("value", cve_record.description)
+            break
 
 async def _check_one(
     client: httpx.AsyncClient,
@@ -115,18 +140,33 @@ async def _check_one(
         return DependencyRisk(package=package, version=version)
 
     cve_records: list[CVERecord] = []
+    cve_ids_to_enrich = []
     for vuln in vulns:
         cvss = _extract_cvss(vuln)
-        cve_records.append(CVERecord(
-            cve_id=_extract_cve_id(vuln),
+        cve_id = _extract_cve_id(vuln)
+        record = CVERecord(
+            cve_id=cve_id,
             package=package,
             installed_version=version,
             severity=_cvss_to_level(cvss),
             cvss_score=cvss,
             description=vuln.get("summary", ""),
-        ))
+        )
+        cve_records.append(record)
+        if cve_id.startswith("CVE-") and settings.nvd_api_key:
+            cve_ids_to_enrich.append(record)
+
+    # Concurrently enrich all valid CVEs via the NVD to acquire accurate base scores
+    if cve_ids_to_enrich:
+        enrich_tasks = [_query_nvd(client, c.cve_id) for c in cve_ids_to_enrich]
+        nvd_results = await asyncio.gather(*enrich_tasks, return_exceptions=True)
+        for record, nvd_res in zip(cve_ids_to_enrich, nvd_results):
+            if isinstance(nvd_res, dict):
+                _enrich_from_nvd(record, nvd_res)
 
     max_cvss = max((c.cvss_score for c in cve_records), default=0.0)
+    for c in cve_records:
+        c.severity = _cvss_to_level(c.cvss_score)
 
     return DependencyRisk(
         package=package,
@@ -135,19 +175,10 @@ async def _check_one(
         effective_risk_score=round(min(max_cvss * 10, 100), 2),
     )
 
-
 async def check_dependencies(
     raw_dependencies: dict[str, str],
     dep_filenames: list[str] | None = None,
 ) -> list[DependencyRisk]:
-    """
-    Queries OSV.dev for every dependency in raw_dependencies.
-    Runs all queries concurrently —> a PR with 50 deps takes roughly the
-    same time as one with 5
-    Ecosystem is inferred from the manifest filename if provided,
-    defaulting to PyPI when unknown
-    """
-    # Infer ecosystem from the first recognised manifest filename
     ecosystem = "PyPI"
     if dep_filenames:
         for fname in dep_filenames:
@@ -172,8 +203,6 @@ async def check_dependencies(
 
     return deps
 
-
-# Common packages that get typosquatted — check new deps against these
 COMMON_PACKAGES = {
     "requests", "numpy", "pandas", "flask", "django", "fastapi",
     "sqlalchemy", "boto3", "pytest", "pydantic", "httpx", "celery",
@@ -181,12 +210,7 @@ COMMON_PACKAGES = {
     "express", "lodash", "react", "axios", "webpack", "babel",
 }
 
-
 def _typosquatting_score(package: str) -> float:
-    """
-    Returns a similarity score 0-1 against known common packages
-    Uses character-level edit distance -> Score > 0.85 but not exact = suspicious
-    """
     def _edit_distance(a: str, b: str) -> int:
         m, n = len(a), len(b)
         dp = list(range(n + 1))
@@ -200,7 +224,7 @@ def _typosquatting_score(package: str) -> float:
     best = 0.0
     for known in COMMON_PACKAGES:
         if package == known:
-            return 0.0  # exact match — not suspicious
+            return 0.0
         longer = max(len(package), len(known))
         if longer == 0:
             continue
@@ -208,16 +232,7 @@ def _typosquatting_score(package: str) -> float:
         best = max(best, similarity)
     return best
 
-
 async def check_new_dependencies(new_packages: list[str], all_deps: dict[str, str]) -> list[DependencyRisk]:
-    """
-    Extra checks for packages added by this PR specifically:
-    - CVE lookup (same as existing deps)
-    - Typosquatting detection against well-known packages
-
-    A new package with high similarity to a known one (> 0.82) gets flagged
-    even without a CVE, since it may be a supply chain attack.
-    """
     if not new_packages:
         return []
 
@@ -231,7 +246,6 @@ async def check_new_dependencies(new_packages: list[str], all_deps: dict[str, st
 
             typo_score = _typosquatting_score(pkg)
             if typo_score > 0.82 and not dep.cves:
-                # Fabricate a signal-level record so the scorer and LLM see it
                 dep.cves.append(CVERecord(
                     cve_id="SUSPICIOUS-TYPOSQUAT",
                     package=pkg,

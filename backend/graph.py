@@ -5,28 +5,23 @@ import networkx as nx
 
 from backend.models import ParseResult, PRFile, BlastRadius
 
-CRITICAL_KEYWORDS = {
-    "auth", "login", "logout", "oauth", "jwt", "session",
-    "payment", "billing", "checkout", "crypto", "cipher",
-    "encrypt", "decrypt", "password", "secret", "token",
-    "admin", "privilege", "permission", "role",
-    "sql", "db", "database", "query", "store",
+CRITICAL_IMPORTS = {
+    "bcrypt", "cryptography", "jsonwebtoken", "sqlalchemy", "pg", 
+    "sqlite3", "stripe", "boto3", "jwt", "oauth2"
+}
+SECONDARY_IMPORTS = {
+    "flask", "express", "django", "fastapi", "requests", "axios", 
+    "urllib", "httpx"
 }
 
-SECONDARY_KEYWORDS = {
-    "user", "account", "profile", "order", "cart",
-    "email", "notification", "webhook", "api", "handler",
-    "server", "service", "controller", "middleware",
+CRITICAL_OPERATIONS = {
+    "execute", "query", "encrypt", "decrypt", "hash", 
+    "verify", "authenticate", "login", "sign", "commit"
 }
-
-
-def _sensitivity(filename: str) -> str:
-    low = filename.lower()
-    if any(k in low for k in CRITICAL_KEYWORDS):
-        return "critical"
-    if any(k in low for k in SECONDARY_KEYWORDS):
-        return "secondary"
-    return "low"
+SECONDARY_OPERATIONS = {
+    "fetch", "request", "get", "post", "put", "delete", 
+    "render", "send", "dispatch"
+}
 
 
 class GraphBundle:
@@ -36,12 +31,9 @@ class GraphBundle:
         self.sens_graph: nx.DiGraph = nx.DiGraph()
 
     def compute_blast_radius(self, changed_functions: list[str]) -> BlastRadius:
-        # Try call graph first (Python/JS only —> needs parsed functions)
         if changed_functions and self.call_graph.number_of_nodes() > 0:
             return self._blast_from_call_graph(changed_functions)
 
-        # Fall back to file graph —> works for all languages including Go
-        # Uses all changed files as starting points instead of functions
         return self._blast_from_file_graph()
 
     def _blast_from_call_graph(self, changed_functions: list[str]) -> BlastRadius:
@@ -54,7 +46,8 @@ class GraphBundle:
         critical, secondary, low = [], [], []
         for node in reachable:
             filename = node.split("::")[0] if "::" in node else node
-            s = _sensitivity(filename)
+            # Rely on the sensitivity already calculated and stored in the node data
+            s = self.file_graph.nodes.get(filename, {}).get("sensitivity", "low")
             if s == "critical":      critical.append(node)
             elif s == "secondary":   secondary.append(node)
             else:                    low.append(node)
@@ -67,14 +60,12 @@ class GraphBundle:
         )
 
     def _blast_from_file_graph(self) -> BlastRadius:
-        # Start BFS from every changed file and find what they connect to
         changed_files = [
             n for n, d in self.file_graph.nodes(data=True)
             if d.get("is_changed", False)
         ]
 
         if not changed_files:
-            # If no import edges were found, just classify the changed files themselves
             changed_files = list(self.file_graph.nodes)
 
         reachable: set[str] = set()
@@ -83,14 +74,12 @@ class GraphBundle:
                 reachable |= nx.descendants(self.file_graph, f)
                 reachable.add(f)
 
-        # If no edges exist (no import relationships detected), still report
-        # the changed files themselves as affected
         if not reachable:
             reachable = set(self.file_graph.nodes)
 
         critical, secondary, low = [], [], []
         for node in reachable:
-            s = _sensitivity(node)
+            s = self.file_graph.nodes.get(node, {}).get("sensitivity", "low")
             if s == "critical":     critical.append(node)
             elif s == "secondary":  secondary.append(node)
             else:                   low.append(node)
@@ -114,18 +103,47 @@ class GraphBundle:
 def build_graphs(parse_result: ParseResult, files: list[PRFile]) -> GraphBundle:
     bundle = GraphBundle()
 
+    # Pre-map all operations (function definitions and calls) to their respective files
+    # O(1) lookup time when determining file sensitivity
+    file_ops: dict[str, set[str]] = {}
+    for fn in parse_result.functions:
+        ops = file_ops.setdefault(fn.filename, set())
+        ops.add(fn.name.lower())
+        for call in fn.calls:
+            ops.add(call.lower())
+
+    def _behavioral_sensitivity(filename: str) -> str:
+        # Check Imports
+        imports = parse_result.imports.get(filename, [])
+        for imp in imports:
+            imp_lower = imp.lower()
+            if any(kw in imp_lower for kw in CRITICAL_IMPORTS):
+                return "critical"
+            if any(kw in imp_lower for kw in SECONDARY_IMPORTS):
+                return "secondary"
+
+        # Check Operations
+        ops = file_ops.get(filename, set())
+        for op in ops:
+            if any(kw in op for kw in CRITICAL_OPERATIONS):
+                return "critical"
+            if any(kw in op for kw in SECONDARY_OPERATIONS):
+                return "secondary"
+
+        return "low"
+
     for f in files:
         if f.status != "removed":
             bundle.file_graph.add_node(
                 f.filename,
                 language=f.language.value,
-                sensitivity=_sensitivity(f.filename),
+                sensitivity=_behavioral_sensitivity(f.filename), # Powered purely by behavior
                 additions=f.additions,
                 deletions=f.deletions,
                 is_changed=(f.additions + f.deletions) > 0,
             )
 
-    # File import edges (Python/JS only —> others have no import data)
+    # File import edges
     file_stems = {
         Path(f.filename).stem.lower(): f.filename
         for f in files if f.status != "removed"
@@ -146,7 +164,7 @@ def build_graphs(parse_result: ParseResult, files: list[PRFile]) -> GraphBundle:
             start_line=fn.start_line,
             end_line=fn.end_line,
             is_changed=fn.is_changed,
-            sensitivity=_sensitivity(fn.filename),
+            sensitivity=_behavioral_sensitivity(fn.filename),
         )
         fn_by_name[fn.name] = qualified
 
@@ -157,21 +175,6 @@ def build_graphs(parse_result: ParseResult, files: list[PRFile]) -> GraphBundle:
             callee = fn_by_name.get(called_name)
             if callee and callee != caller:
                 bundle.call_graph.add_edge(caller, callee, edge_type="call")
-
-    # Sensitivity graph
-    domain_files: dict[str, list[str]] = {}
-    for f in files:
-        if f.status == "removed":
-            continue
-        for kw in CRITICAL_KEYWORDS:
-            if kw in f.filename.lower():
-                domain_files.setdefault(kw, []).append(f.filename)
-                break
-
-    for domain, members in domain_files.items():
-        for i, a in enumerate(members):
-            for b in members[i + 1:]:
-                bundle.sens_graph.add_edge(a, b, domain=domain)
 
     return bundle
 

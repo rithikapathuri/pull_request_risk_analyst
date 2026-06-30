@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +18,7 @@ from backend.llm import run_llm_chain
 settings = get_settings()
 
 app = FastAPI(
-    title="PR Risk Autopilot",
+    title="PR Risk Analyst",
     description="Analyzes GitHub pull requests for security risk, blast radius, and CVE exposure",
     version="0.1.0",
 )
@@ -46,29 +47,35 @@ async def run_analysis(
 ) -> PRAnalysisResult:
     """
     Full pipeline — called by the API route and the benchmark runner.
-
-    1  Fetch PR metadata, files, diffs, dependency manifests from GitHub
-    2  Parse changed hunks with AST (Python) or regex (JS/TS)
-    3  Build file dependency graph + function call graph with NetworkX
-    4  Check every dependency against OSV.dev concurrently
-    5  Run call-graph DFS to test whether vulnerable functions are reachable
-    6  Compute weighted risk score deterministically
-    7  Run three-step Gemini chain for human-readable output (optional)
     """
     async with GitHubClient() as gh:
         pr_info = await gh.get_pr(owner, repo, pr_number)
+
+        # Fetch full file contents for modified/added files at head_sha to ensure AST integrity
+        full_sources: dict[str, str] = {}
+        fetch_tasks = []
+        fetch_filenames = []
+        for f in pr_info.files:
+            if f.status != "removed":
+                fetch_tasks.append(gh.get_file_at_ref(owner, repo, f.filename, pr_info.head_sha))
+                fetch_filenames.append(f.filename)
+        
+        contents = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        for fname, content in zip(fetch_filenames, contents):
+            if isinstance(content, str):
+                full_sources[fname] = content
 
     if not pr_info.files:
         raise ValueError("PR has no changed files")
 
     hunks        = parse_diff_hunks(pr_info.files)
-    parse_result = parse_pr(pr_info.files, hunks)
+    parse_result = parse_pr(pr_info.files, hunks, full_sources)
     graphs       = build_graphs(parse_result, pr_info.files)
     blast_radius = graphs.compute_blast_radius(parse_result.changed_function_names)
     dep_risks      = await check_dependencies(pr_info.raw_dependencies, pr_info.dependency_files)
     new_dep_risks  = await check_new_dependencies(pr_info.new_dependencies, pr_info.raw_dependencies)
-    # Merge new dep results in —> new packages appear in both lists but new_dep_risks
-    # has the is_new=True flag and typosquatting checks applied
+    
+    # Merge new dep results in
     existing_pkgs  = {d.package for d in dep_risks}
     dep_risks      = dep_risks + [d for d in new_dep_risks if d.package not in existing_pkgs]
     dep_risks      = analyze_reachability(dep_risks, parse_result, graphs.call_graph)
@@ -107,7 +114,7 @@ async def analyze(req: AnalyzeRequest) -> PRAnalysisResult:
 
 @app.get("/api/v1/pr/{owner}/{repo}/{pr_number}", response_model=PRInfo)
 async def get_pr(owner: str, repo: str, pr_number: int) -> PRInfo:
-    """Fetch PR metadata only — no analysis. Useful for previewing before submitting."""
+    """Fetch PR metadata only —> no analysis, useful for previewing before submitting"""
     try:
         async with GitHubClient() as gh:
             return await gh.get_pr(owner, repo, pr_number)
@@ -128,12 +135,24 @@ async def health() -> dict:
 async def get_graph_data(req: AnalyzeRequest) -> dict:
     async with GitHubClient() as gh:
         pr_info = await gh.get_pr(req.owner, req.repo, req.pr_number)
+        
+        # We also need full sources for graph preview consistency
+        full_sources: dict[str, str] = {}
+        fetch_tasks = []
+        fetch_filenames = []
+        for f in pr_info.files:
+            if f.status != "removed":
+                fetch_tasks.append(gh.get_file_at_ref(req.owner, req.repo, f.filename, pr_info.head_sha))
+                fetch_filenames.append(f.filename)
+        contents = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        for fname, content in zip(fetch_filenames, contents):
+            if isinstance(content, str):
+                full_sources[fname] = content
 
     hunks        = parse_diff_hunks(pr_info.files)
-    parse_result = parse_pr(pr_info.files, hunks)
+    parse_result = parse_pr(pr_info.files, hunks, full_sources)
     graphs       = build_graphs(parse_result, pr_info.files)
 
-    # Use call graph when available (Python/JS), fall back to file graph for all other languages
     use_call_graph = graphs.call_graph.number_of_nodes() > 0
     g = graphs.call_graph if use_call_graph else graphs.file_graph
 
@@ -143,7 +162,6 @@ async def get_graph_data(req: AnalyzeRequest) -> dict:
             label = node_id.split("::")[-1] if "::" in node_id else node_id
             filename = data.get("filename", "")
         else:
-            # File graph nodes are filenames —> use basename as label
             label = node_id.split("/")[-1]
             filename = node_id
 

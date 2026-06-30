@@ -62,6 +62,8 @@ def _change_severity(pr_info: PRInfo) -> float:
 
 
 def _blast_radius_score(blast: BlastRadius) -> float:
+    if blast.override_score is not None:
+        return round(min(blast.override_score, 100), 2)
     return round(min(blast.weighted_score * 4.0, 100), 2)
 
 

@@ -46,6 +46,7 @@ class PRInfo(BaseModel):
     author: str
     base_branch: str
     head_branch: str
+    head_sha: str  # Immutable SHA to fetch exact file state
     files: list[PRFile] = []
     dependency_files: list[str] = []
     raw_dependencies: dict[str, str] = {}
@@ -120,6 +121,7 @@ class BlastRadius(BaseModel):
     secondary_impact: list[str] = []
     low_impact: list[str] = []
     total_affected: int = 0
+    override_score: Optional[float] = None  # Allows CLI to inject exact centrality
 
     @property
     def weighted_score(self) -> float:
