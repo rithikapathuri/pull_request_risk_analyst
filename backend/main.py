@@ -143,7 +143,7 @@ async def get_graph_data(req: AnalyzeRequest) -> dict:
             label = node_id.split("::")[-1] if "::" in node_id else node_id
             filename = data.get("filename", "")
         else:
-            # File graph nodes are filenames — use basename as label
+            # File graph nodes are filenames —> use basename as label
             label = node_id.split("/")[-1]
             filename = node_id
 

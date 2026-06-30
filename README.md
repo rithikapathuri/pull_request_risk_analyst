@@ -1,140 +1,172 @@
 # PR Risk Analyst
 
-A pull request security intelligence system that goes beyond dependency scanning. Instead of flagging every vulnerable package in a repository, it determines whether the specific code changed in a PR actually reaches a vulnerable function, eliminating the false positives that cause alert fatigue in real security workflows.
+## Overview
+
+PR Risk Analyst is a pull request security analysis system that determines whether code changes introduce *reachable* vulnerabilities in a codebase.
+
+It analyzes what changed in a pull request and evaluates whether those changes can realistically reach vulnerable functions during execution. The goal is to reduce false positives from traditional dependency scanning and help engineers focus on security risks that are actually exploitable.
 
 **Live:** https://pull-request-risk-analyst.vercel.app
 
 ---
 
-## How it works
+## Problem Context
 
-Enter the owner, repository name, and PR number for any public GitHub repository. The system runs a seven-stage pipeline:
+Most security tools evaluate vulnerabilities at the dependency level without understanding whether the vulnerable code is actually reachable from the changes introduced in a pull request.
 
-1. **Ingestion** fetches the PR diff, changed files, and dependency manifests from the GitHub REST API. Compares dependency manifests between the base and head commits to identify packages added by this PR specifically.
+This leads to findings that are technically valid but not actionable, which contributes to alert fatigue in real engineering workflows.
 
-2. **Diff-aware parsing** extracts only the changed line ranges from the unified diff rather than scanning entire files. Runs Python's AST walker over those ranges to detect dangerous patterns precisely (eval, pickle.loads, yaml.load without Loader, subprocess with shell=True). Falls back to regex for JavaScript and TypeScript. Also scans deleted lines for removed security controls, a deleted check_permission() call is flagged as high-risk even when no new code is added.
+This project explores contextual risk analysis based on actual code execution paths, where a vulnerability only matters if it can be reached from modified code.
 
-3. **IaC scanning** separately scans Dockerfiles, GitHub Actions workflows, and Kubernetes manifests for misconfigurations: privileged containers, root user, secrets in environment variables, and curl-pipe-bash patterns.
+---
 
-4. **Graph building** constructs a file dependency graph and function call graph using NetworkX. For non-Python repos where call relationships are not parseable, uses the file graph as a fallback so blast radius is never zero for large PRs.
+## System Architecture
 
-5. **CVE matching** queries OSV.dev concurrently for every dependency, extracting CVSS scores. New packages added by the PR are checked for typosquatting via edit distance against a list of commonly abused package names.
+The system is implemented as a multi-stage analysis pipeline that processes pull requests from ingestion through risk scoring.
 
-6. **Reachability analysis** runs DFS traversal from each changed function through the call graph to check whether any execution path reaches a known-vulnerable function in a flagged dependency. Non-reachable CVEs are discounted by 85% rather than dropped, the package is still present even if not currently called.
+### 1. Ingestion
+Fetches pull request metadata from the GitHub API, including diffs, changed files, and dependency manifests. It also compares dependency files between commits to identify newly introduced packages.
 
-7. **Risk scoring** applies a deterministic weighted formula across four components: change severity (lines changed, weighted 2.5x for sensitive paths), blast radius, security signals, and dependency risk. No LLM is involved in scoring. Deletion signals score independently from addition signals to prevent them being averaged down by count. An auth_check_removed signal enforces a minimum score floor of 65.
+### 2. Diff-aware parsing
+Analyzes only modified sections of code instead of scanning entire files. Uses Python AST parsing to detect risky patterns such as:
+- eval
+- pickle.loads
+- unsafe YAML loading
+- subprocess calls with shell execution enabled
 
-An optional Gemini Flash chain then runs three sequential prompts: risk category classification, targeted explanation, and fix recommendations, with the actual diff patches included so it can reason about removed code in context.
+For JavaScript and TypeScript, regex-based detection is used. Deleted lines are also analyzed to capture removed security checks.
+
+### 3. Infrastructure-as-Code scanning
+Scans Dockerfiles, GitHub Actions workflows, and Kubernetes manifests for misconfigurations such as:
+- privileged containers
+- running as root
+- exposed secrets in environment variables
+- unsafe shell execution patterns
+
+### 4. Dependency graph construction
+Builds file-level and function-level dependency graphs using NetworkX. When full call graph resolution is not possible, a file-level graph is used to preserve cross-module relationships.
+
+### 5. CVE matching
+Queries OSV.dev for known vulnerabilities in dependencies and maps them to CVSS severity scores. Newly introduced packages are checked for potential typosquatting using string similarity comparisons.
+
+### 6. Reachability analysis
+Performs graph traversal from modified functions to determine whether execution paths can reach vulnerable functions in dependencies. Vulnerabilities that are not reachable are down-weighted rather than removed entirely.
+
+### 7. Risk scoring
+Applies a deterministic scoring function that combines:
+- severity of code changes
+- blast radius of modified components
+- static security signals
+- dependency risk
+
+The scoring logic is fully deterministic and does not rely on LLMs. This ensures consistent results across runs and avoids variability in risk classification.
+
+---
+
+## Optional explanation layer (LLM)
+
+An optional Gemini Flash-based module provides:
+- risk categorization
+- natural language explanation
+- remediation suggestions
+
+This layer is used only for explanation and does not affect the underlying risk score.
 
 ---
 
 ## Stack
 
-**Backend** Python, FastAPI, NetworkX, httpx, Pydantic, Tenacity  
-**LLM** Gemini 1.5 Flash via google-genai SDK  
-**CVE data** OSV.dev (no API key required)  
-**Frontend** React, Vite, Tailwind CSS, Cytoscape.js  
-**Deployment** Render (backend), Vercel (frontend)
+**Backend**
+Python, FastAPI, NetworkX, httpx, Pydantic, Tenacity
+
+**Frontend**
+React, Vite, Tailwind CSS, Cytoscape.js
+
+**Security data**
+OSV.dev for CVE data
+
+**LLM layer**
+Gemini 2.5 Flash via google-genai SDK
+
+**Deployment**
+Render (backend), Vercel (frontend)
 
 ---
 
 ## Running locally
 
-**1. Clone and create a virtual environment**
+### 1. Clone and set up environment
 ```bash
 cd pull_request_risk_analyst
 python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
+source venv/bin/activate
 ```
 
-**2. Install dependencies**
+### 2. Install dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-**3. Configure environment variables**
-
-Create a `.env` file in the project root:
-```
+### 3. Create .env file and add environment variables
+```bash
 GITHUB_TOKEN=your_token_here
 GEMINI_API_KEY=your_key_here
-NVD_API_KEY=
-APP_ENV=development
+NVD_API_KEY=your_key_here
 ```
 
-- `GITHUB_TOKEN` generate at github.com/settings/tokens with public_repo scope. Without it you get 60 API requests/hour; with it, 5000.
-- `GEMINI_API_KEY` generate at aistudio.google.com. Free tier, no credit card required.
-- `NVD_API_KEY` optional. OSV.dev is the primary CVE source and needs no key.
-
-**4. Start the backend**
+### 4. Run backend
 ```bash
 uvicorn backend.main:app --reload --port 8000
 ```
 
-**5. Start the frontend**
+### 5. Run frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The Vite dev server proxies `/api/*` to the backend automatically.
-
-**6. Run the test suite**
+### 6. Run benchmark
 ```bash
-pytest tests/ -v
+python -m backend.benchmark
+python -m backend.benchmark --llm
+python -m backend.benchmark --cases 2
 ```
 
----
+Benchmark results are stored in data/benchmark/latest_results.json
 
-## Benchmark
-
-The system includes an evaluation suite that runs the full pipeline against known CVE-affected PRs and reports precision and recall:
-
+### 7. Project Structure
 ```bash
-python -m backend.benchmark           # no LLM, fast
-python -m backend.benchmark --llm     # full pipeline
-python -m backend.benchmark --cases 2 # quick smoke test
+backend/
+  main.py
+  config.py
+  models.py
+  github.py
+  parser.py
+  graph.py
+  reachability.py
+  cve.py
+  scorer.py
+  llm.py
+  benchmark.py
+
+frontend/
+  src/
+    App.jsx
+    hooks/useAnalysis.js
+    components/
+      SearchForm.jsx
+      PRMeta.jsx
+      RiskScore.jsx
+      AIPanel.jsx
+      BlastRadius.jsx
+      SignalsTable.jsx
+      CVETable.jsx
+      CallGraph.jsx
+
+tests/
+  test_github.py
+  test_parser.py
+  test_scorer.py
 ```
 
-Results are saved to `data/benchmark/latest_results.json`.
-
----
-
-## Project structure
-
-```
-pull_request_risk_analyst/
-├── backend/
-│   ├── main.py          FastAPI app, routes, pipeline orchestration
-│   ├── config.py        Settings, scoring weights, env vars
-│   ├── models.py        Pydantic models shared across all modules
-│   ├── github.py        GitHub API ingestion, diff parsing, dep manifest parsers
-│   ├── parser.py        AST parser, security signal detection, IaC scanning
-│   ├── graph.py         NetworkX graph builder, blast radius BFS
-│   ├── reachability.py  Call-path DFS, vulnerable function lookup
-│   ├── cve.py           OSV.dev CVE matching, typosquatting detection
-│   ├── scorer.py        Deterministic risk formula
-│   ├── llm.py           Gemini chain: triage, explanation, recommendations
-│   └── benchmark.py     Precision/recall eval runner
-├── frontend/
-│   └── src/
-│       ├── App.jsx
-│       ├── hooks/useAnalysis.js
-│       └── components/
-│           ├── SearchForm.jsx
-│           ├── PRMeta.jsx
-│           ├── RiskScore.jsx
-│           ├── AIPanel.jsx
-│           ├── BlastRadius.jsx
-│           ├── SignalsTable.jsx
-│           ├── CVETable.jsx
-│           └── CallGraph.jsx
-├── tests/
-│   ├── test_github.py
-│   ├── test_parser.py
-│   └── test_scorer.py
-├── data/benchmark/ground_truth.json
-├── render.yaml
-└── requirements.txt
-```
