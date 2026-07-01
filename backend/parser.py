@@ -355,6 +355,65 @@ def _is_iac_file(filename: str) -> bool:
     p = Path(filename)
     return p.suffix.lower() in IAC_EXTENSIONS or p.name in IAC_FILENAMES or "github/workflows" in filename.lower()
 
+
+
+GO_FUNC_PATTERN = re.compile(r'^func\s+(?:\(\w+\s+\*?\w+\)\s+)?(\w+)\s*\(', re.MULTILINE)
+
+
+def _parse_go(
+    filename: str,
+    source: str,
+    hunk_ranges: list[tuple[int, int]],
+) -> tuple[list[FunctionNode], list[SecuritySignal]]:
+    lines = source.splitlines()
+    functions: list[FunctionNode] = []
+    signals: list[SecuritySignal] = []
+    seen: set[tuple[int, str]] = set()
+
+    for m in GO_FUNC_PATTERN.finditer(source):
+        name = m.group(1)
+        lineno = source[:m.start()].count('\n') + 1
+        functions.append(FunctionNode(
+            name=name,
+            filename=filename,
+            start_line=lineno,
+            end_line=lineno,
+            is_changed=_line_in_hunks(lineno, hunk_ranges),
+        ))
+
+    for lineno, line in enumerate(lines, start=1):
+        if not _line_in_hunks(lineno, hunk_ranges):
+            continue
+        if line.strip().startswith("//"):
+            continue
+        for pattern, signal_type in REGEX_PATTERNS:
+            if pattern.search(line):
+                key = (lineno, signal_type)
+                if key not in seen:
+                    signals.append(_make_signal(filename, lineno, signal_type, line.strip()))
+                    seen.add(key)
+                break
+
+    return functions, signals
+
+
+def _extract_go_imports(source: str) -> list[str]:
+    imports = []
+    in_import = False
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped == "import (":
+            in_import = True
+        elif in_import and stripped == ")":
+            in_import = False
+        elif in_import or stripped.startswith("import "):
+            for m in re.finditer(r'"([^"]+)"', stripped):
+                pkg = m.group(1).split("/")[-1]
+                if pkg:
+                    imports.append(pkg)
+    return list(set(imports))
+
+
 def parse_pr(files: list[PRFile], hunks: list[DiffHunk], full_sources: dict[str, str]) -> ParseResult:
     all_functions: list[FunctionNode] = []
     all_signals: list[SecuritySignal] = []
@@ -379,7 +438,7 @@ def parse_pr(files: list[PRFile], hunks: list[DiffHunk], full_sources: dict[str,
             continue
 
         ext = Path(f.filename).suffix.lower()
-        if ext not in {".py", ".js", ".ts", ".mjs", ".tsx"}:
+        if ext not in {".py", ".js", ".ts", ".mjs", ".tsx", ".go"}:
             if any(kw in f.filename.lower() for kw in SENSITIVE_AUTH_PATHS):
                 all_signals.append(_make_signal(f.filename, 0, "auth_modified", f.filename))
             continue
@@ -393,6 +452,8 @@ def parse_pr(files: list[PRFile], hunks: list[DiffHunk], full_sources: dict[str,
 
         if ext == ".py":
             fns, sigs = _parse_python(f.filename, source, hunk_ranges)
+        elif ext == ".go":
+            fns, sigs = _parse_go(f.filename, source, hunk_ranges)
         else:
             fns, sigs = _parse_js_ts(f.filename, source, hunk_ranges)
 
@@ -401,7 +462,10 @@ def parse_pr(files: list[PRFile], hunks: list[DiffHunk], full_sources: dict[str,
 
         all_functions.extend(fns)
         all_signals.extend(sigs)
-        all_imports[f.filename] = _extract_imports(f.filename, source)
+        if ext == ".go":
+            all_imports[f.filename] = _extract_go_imports(source)
+        else:
+            all_imports[f.filename] = _extract_imports(f.filename, source)
         changed_fn_names.extend(fn.name for fn in fns if fn.is_changed)
 
     seen: set[tuple[str, int, str, bool]] = set()

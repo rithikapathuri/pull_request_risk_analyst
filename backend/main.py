@@ -25,7 +25,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "https://pr-risk-autopilot.vercel.app"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "https://pull-request-risk-analyst.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -136,7 +136,7 @@ async def get_graph_data(req: AnalyzeRequest) -> dict:
     async with GitHubClient() as gh:
         pr_info = await gh.get_pr(req.owner, req.repo, req.pr_number)
         
-        # We also need full sources for graph preview consistency
+        # Need full sources for graph preview consistency
         full_sources: dict[str, str] = {}
         fetch_tasks = []
         fetch_filenames = []

@@ -16,6 +16,14 @@ def make_hunk(filename: str, start: int, lines: list[str]) -> DiffHunk:
     return DiffHunk(filename=filename, start_line=start, end_line=start + len(lines), added_lines=lines)
 
 
+def _full_sources_from_hunks(files, hunks):
+    result = {}
+    for f in files:
+        file_hunks = [h for h in hunks if h.filename == f.filename]
+        result[f.filename] = "\n".join(line for h in file_hunks for line in h.added_lines)
+    return result
+
+
 class TestPythonParser:
     def test_detects_eval(self):
         source = "def run(x):\n    return eval(x)\n"
@@ -55,7 +63,6 @@ class TestPythonParser:
         assert any(s.signal_type == "weak_hash" for s in sigs)
 
     def test_only_changed_lines_flagged(self):
-        # Signal is on line 5, hunk only covers lines 1-3
         source = "def safe():\n    pass\n\ndef unsafe():\n    eval(x)\n"
         fns, sigs = _parse_python("test.py", source, [(1, 3)])
         assert not any(s.signal_type == "eval_usage" for s in sigs)
@@ -80,11 +87,17 @@ class TestPythonParser:
         assert any(s.signal_type == "hardcoded_secret" for s in sigs)
 
     def test_no_duplicate_signals(self):
-        # Same line should only generate one signal of each type
         source = "eval(user_input)\neval(user_input)\n"
         fns, sigs = _parse_python("test.py", source, [(1, 3)])
         eval_sigs = [s for s in sigs if s.signal_type == "eval_usage"]
         assert len(eval_sigs) == len({s.line for s in eval_sigs})
+
+    def test_range_overlap_catches_middle_of_function(self):
+        source = "def foo():\n    x = 1\n    eval(x)\n    return x\n"
+        fns, sigs = _parse_python("test.py", source, [(3, 3)])
+        assert any(s.signal_type == "eval_usage" for s in sigs)
+        foo = next(f for f in fns if f.name == "foo")
+        assert foo.is_changed
 
 
 class TestJSParser:
@@ -121,12 +134,14 @@ class TestImportExtraction:
 class TestAuthModifiedSignal:
     def test_auth_file_flagged(self):
         files = [make_file("backend/auth/login.py", "@@ -1,2 +1,3 @@\n+def login(): pass")]
-        hunks = parse_diff_hunks(files) if files[0].patch else []
-        result = parse_pr(files, hunks)
+        hunks = parse_diff_hunks(files)
+        full_sources = _full_sources_from_hunks(files, hunks)
+        result = parse_pr(files, hunks, full_sources)
         assert any(s.signal_type == "auth_modified" for s in result.security_signals)
 
     def test_non_auth_file_not_flagged(self):
         files = [make_file("utils/helpers.py", "@@ -1,1 +1,2 @@\n+x = 1")]
-        hunks = parse_diff_hunks(files) if files[0].patch else []
-        result = parse_pr(files, hunks)
+        hunks = parse_diff_hunks(files)
+        full_sources = _full_sources_from_hunks(files, hunks)
+        result = parse_pr(files, hunks, full_sources)
         assert not any(s.signal_type == "auth_modified" for s in result.security_signals)

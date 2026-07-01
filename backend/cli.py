@@ -6,8 +6,9 @@ import networkx as nx
 import json
 
 from backend.models import PRInfo, PRFile, BlastRadius, SecuritySignalSummary
-from backend.github import detect_language, DEPENDENCY_FILES, parse_all_dependencies
-from backend.parser import parse_diff_hunks, parse_pr, _extract_imports
+
+from backend.parser import parse_pr, _extract_imports
+from backend.github import parse_diff_hunks, detect_language, DEPENDENCY_FILES, parse_all_dependencies
 from backend.cve import check_dependencies, check_new_dependencies
 from backend.reachability import analyze_reachability
 from backend.scorer import compute_risk_score
@@ -15,7 +16,7 @@ from backend.llm import run_llm_chain
 from backend.graph import build_graphs
 
 def get_local_diff(repo_path: Path, target_branch: str) -> list[PRFile]:
-    """Uses local git commands to extract changed files and patches."""
+    """Uses local git commands to extract changed files and patches"""
     try:
         # Get list of changed files
         cmd = ["git", "diff", "--name-status", target_branch]
@@ -66,9 +67,9 @@ def calculate_global_centrality(repo_path: Path, changed_files: list[PRFile]) ->
             
             try:
                 content = file_path.read_text(encoding="utf-8")
-                imports = _extract_imports(file_path.name, content)
-                
                 rel_path = file_path.relative_to(repo_path).as_posix()
+                imports = _extract_imports(rel_path, content)
+                
                 global_graph.add_node(rel_path)
                 
                 for imp in imports:

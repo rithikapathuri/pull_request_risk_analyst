@@ -18,7 +18,7 @@ def make_pr(*filenames_and_counts: tuple[str, int, int]) -> PRInfo:
         for fn, add, rem in filenames_and_counts
     ]
     return PRInfo(owner="o", repo="r", number=1, title="t", author="a",
-                  base_branch="main", head_branch="feat", files=files)
+                  base_branch="main", head_branch="feat", head_sha="abc123", files=files)
 
 
 def make_signal(signal_type: str, severity: RiskLevel = RiskLevel.HIGH) -> SecuritySignal:
@@ -178,7 +178,7 @@ class TestReachability:
         assert _is_reachable(g, ["route"], ["unrelated_fn"]) is False
 
     def test_empty_graph_conservative(self):
-        # No call graph data —> should return True (conservative)
+        # No call graph data — should return True (conservative)
         assert _is_reachable(nx.DiGraph(), ["anything"], ["vuln_fn"]) is True
 
     def test_analyze_reachability_sets_flag(self):
@@ -188,6 +188,6 @@ class TestReachability:
         dep = DependencyRisk(package="pkg", version="1.0", cves=[cve],
                              effective_risk_score=80.0)
         parse_result = ParseResult(changed_function_names=["route"])
-        # pkg not in KNOWN_VULNERABLE_FUNCTIONS —> is_reachable stays True (conservative)
+        # pkg not in KNOWN_VULNERABLE_FUNCTIONS — is_reachable stays True (conservative)
         result = analyze_reachability([dep], parse_result, g)
         assert result[0].cves[0].is_reachable is True
