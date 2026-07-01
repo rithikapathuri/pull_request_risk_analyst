@@ -34,7 +34,7 @@ Analyzes the full source files to ensure Abstract Syntax Tree (AST) integrity, t
 - unsafe YAML loading
 - subprocess calls with shell execution enabled
 
-For JavaScript and TypeScript, regex-based detection is used. Deleted lines are uniquely analyzed to capture the removal of critical security controls (e.g., deleted authentication checks).
+Regex-based detection is used for JavaScript, TypeScript, and Go. Deleted lines are uniquely analyzed to capture the removal of critical security controls (e.g., deleted authentication checks).
 
 ### 3. Infrastructure-as-Code scanning
 Scans Dockerfiles, GitHub Actions workflows, and Kubernetes manifests for misconfigurations such as:
@@ -142,7 +142,7 @@ python -m backend.benchmark --cases 2
 
 Benchmark results are stored in data/benchmark/latest_results.json
 
-### 7. Project Structure
+### 8. Project Structure
 ```bash
 backend/
   main.py

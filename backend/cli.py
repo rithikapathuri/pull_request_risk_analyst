@@ -16,7 +16,7 @@ from backend.llm import run_llm_chain
 from backend.graph import build_graphs
 
 def get_local_diff(repo_path: Path, target_branch: str) -> list[PRFile]:
-    """Uses local git commands to extract changed files and patches"""
+    """Uses local git commands to extract changed files and patches."""
     try:
         # Get list of changed files
         cmd = ["git", "diff", "--name-status", target_branch]
@@ -115,23 +115,29 @@ async def run_local_analysis(repo_path: Path, target_branch: str, run_llm: bool)
     # Calculate Blast Radius via Graph Centrality
     centrality_score = calculate_global_centrality(repo_path, pr_files)
     
-    # Mock PRInfo since we bypass the GitHub API
+    # Parse local dependency files so CVE checks actually run
+    local_dep_content = {}
+    for dep_file in dep_filenames:
+        try:
+            local_dep_content[dep_file] = (repo_path / dep_file).read_text(encoding="utf-8")
+        except Exception:
+            pass
+    raw_dependencies = parse_all_dependencies(local_dep_content)
+
     pr_info = PRInfo(
         owner="local", repo=repo_path.name, number=0, title="Local Analysis",
         author="local-user", base_branch=target_branch, head_branch="HEAD", head_sha="local",
-        files=pr_files, dependency_files=dep_filenames, raw_dependencies={}, new_dependencies=[]
+        files=pr_files, dependency_files=dep_filenames,
+        raw_dependencies=raw_dependencies, new_dependencies=[],
     )
 
     print("[*] Parsing AST and checking CVEs...")
     hunks = parse_diff_hunks(pr_files)
     parse_result = parse_pr(pr_files, hunks, full_sources)
-    
-    # Local graphs still built for reachability logic
+
     graphs = build_graphs(parse_result, pr_files)
-    
-    # Inject our mathematically perfect centrality score
     blast_radius = BlastRadius(override_score=centrality_score)
-    
+
     dep_risks = await check_dependencies(pr_info.raw_dependencies, dep_filenames)
     dep_risks = analyze_reachability(dep_risks, parse_result, graphs.call_graph)
     

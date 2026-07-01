@@ -38,10 +38,12 @@ class GraphBundle:
 
     def _blast_from_call_graph(self, changed_functions: list[str]) -> BlastRadius:
         reachable: set[str] = set()
-        for fn in changed_functions:
-            if fn in self.call_graph:
-                reachable |= nx.descendants(self.call_graph, fn)
-                reachable.add(fn)
+        for bare_name in changed_functions:
+            # changed_functions stores bare names; call graph nodes are qualified "file::name"
+            matching = [n for n in self.call_graph.nodes if n.endswith(f"::{bare_name}") or n == bare_name]
+            for node in matching:
+                reachable |= nx.descendants(self.call_graph, node)
+                reachable.add(node)
 
         critical, secondary, low = [], [], []
         for node in reachable:

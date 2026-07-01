@@ -73,7 +73,7 @@ async def run_analysis(
     graphs       = build_graphs(parse_result, pr_info.files)
     blast_radius = graphs.compute_blast_radius(parse_result.changed_function_names)
     dep_risks      = await check_dependencies(pr_info.raw_dependencies, pr_info.dependency_files)
-    new_dep_risks  = await check_new_dependencies(pr_info.new_dependencies, pr_info.raw_dependencies)
+    new_dep_risks  = await check_new_dependencies(pr_info.new_dependencies, pr_info.raw_dependencies, pr_info.dependency_files)
     
     # Merge new dep results in
     existing_pkgs  = {d.package for d in dep_risks}
@@ -136,7 +136,7 @@ async def get_graph_data(req: AnalyzeRequest) -> dict:
     async with GitHubClient() as gh:
         pr_info = await gh.get_pr(req.owner, req.repo, req.pr_number)
         
-        # Need full sources for graph preview consistency
+        # We also need full sources for graph preview consistency
         full_sources: dict[str, str] = {}
         fetch_tasks = []
         fetch_filenames = []

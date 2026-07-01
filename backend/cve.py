@@ -232,16 +232,28 @@ def _typosquatting_score(package: str) -> float:
         best = max(best, similarity)
     return best
 
-async def check_new_dependencies(new_packages: list[str], all_deps: dict[str, str]) -> list[DependencyRisk]:
+async def check_new_dependencies(
+    new_packages: list[str],
+    all_deps: dict[str, str],
+    dep_filenames: list[str] | None = None,
+) -> list[DependencyRisk]:
     if not new_packages:
         return []
+
+    ecosystem = "PyPI"
+    if dep_filenames:
+        for fname in dep_filenames:
+            eco = ECOSYSTEM_BY_FILE.get(Path(fname).name)
+            if eco:
+                ecosystem = eco
+                break
 
     results: list[DependencyRisk] = []
 
     async with httpx.AsyncClient(timeout=15) as client:
         for pkg in new_packages:
             version = all_deps.get(pkg, "unknown")
-            dep = await _check_one(client, pkg, version, "PyPI")
+            dep = await _check_one(client, pkg, version, ecosystem)
             dep.is_new = True
 
             typo_score = _typosquatting_score(pkg)
