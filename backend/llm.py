@@ -58,8 +58,7 @@ def _build_context(
     new_deps = pr.new_dependencies
     dep_section = f"New packages added by this PR: {new_deps}\n" if new_deps else ""
 
-    # Include up to 3 file diffs so the LLM sees actual removed/added code
-    # Truncated to avoid hitting token limits
+    # Include up to 3 file diffs so LLM sees actual removed/added code
     diff_section = ""
     if parse_result.file_patches:
         diff_lines = []
@@ -111,7 +110,7 @@ async def _triage(context: str) -> Optional[LLMTriage]:
         )
         return response.parsed
     except Exception as e:
-        log.warning("triage failed: %s", e)
+        log.error("triage failed: %s", e)
         return None
 
 
@@ -137,7 +136,7 @@ async def _explain(context: str, category: str) -> Optional[LLMExplanation]:
         )
         return response.parsed
     except Exception as e:
-        log.warning("explanation failed: %s", e)
+        log.error("explanation failed: %s", e)
         return None
 
 
@@ -166,7 +165,7 @@ async def _recommend(
         )
         return response.parsed
     except Exception as e:
-        log.warning("recommendations failed: %s", e)
+        log.error("recommendations failed: %s", e)
         return None
 
 
@@ -180,12 +179,14 @@ async def _review_ambiguous(
     summaries: list[SecuritySignalSummary],
     context: str,
 ) -> list[SecuritySignalSummary]:
-    for item in summaries:
-        if not item.signal.is_ambiguous:
-            continue
+    SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    ambiguous = [item for item in summaries if item.signal.is_ambiguous]
+    ambiguous.sort(key=lambda x: SEVERITY_ORDER.get(x.signal.severity.value, 5))
+
+    for item in ambiguous[:3]:
         sig = item.signal
         deletion_note = (
-            "This signal came from a DELETED line —> assess whether removing this "
+            "This signal came from a DELETED line. Assess whether removing this "
             "code weakens the security posture even if it looks innocuous."
             if sig.is_deletion else
             "Assess whether this added code is actually exploitable in context."
@@ -213,7 +214,7 @@ async def _review_ambiguous(
                 item.confirmed_risky = data.confirmed_risky
                 item.llm_verdict = data.verdict
         except Exception as e:
-            log.warning("signal review failed for %s: %s", sig.signal_type, e)
+            log.error("signal review failed for %s: %s", sig.signal_type, e)
             item.confirmed_risky = True
 
     return summaries
